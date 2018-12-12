@@ -38,6 +38,6 @@ class RouteCallable
             $className = str_replace('{$' . $name . '}', $value, $className);
             $methodName = str_replace('{$' . $name . '}', $value, $methodName);
         }
-        return [RequestContext::getServer()->getBean($className), $methodName];
+        return [RequestContext::getServerBean($className), $methodName];
     }
 }

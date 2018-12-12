@@ -23,7 +23,9 @@ class Init implements IEventListener
      */
     public function handle(EventParam $e)
     {
-        if('server' === Tool::getToolName() && 'start' === Tool::getToolOperation())
+        $isCli = 'cli' === PHP_SAPI;
+
+        if($isCli && 'server' === Tool::getToolName() && 'start' === Tool::getToolOperation())
         {
             while(true)
             {
@@ -51,15 +53,18 @@ class Init implements IEventListener
             App::loadRuntimeInfo(Imi::getRuntimePath('runtime.cache'));
         }
         App::getBean('ErrorLog')->register();
-        foreach(Helper::getMains() as $main)
+        if($isCli)
         {
-            $config = $main->getConfig();
-            // 原子计数初始化
-            AtomicManager::setNames($config['atomics'] ?? []);
-            // 通道队列初始化
-            ChannelManager::setNames($config['channels'] ?? []);
+            foreach(Helper::getMains() as $main)
+            {
+                $config = $main->getConfig();
+                // 原子计数初始化
+                AtomicManager::setNames($config['atomics'] ?? []);
+                // 通道队列初始化
+                ChannelManager::setNames($config['channels'] ?? []);
+            }
+            AtomicManager::init();
+            ChannelManager::init();
         }
-        AtomicManager::init();
-        ChannelManager::init();
     }
 }

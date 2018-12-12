@@ -1,7 +1,7 @@
 <?php
 namespace Imi\Server\Route;
 
-use Imi\Server\Http\Message\Request;
+use Psr\Http\Message\RequestInterface;
 
 interface IRoute
 {
@@ -10,5 +10,5 @@ interface IRoute
      * @param Request $request
      * @return array
      */
-    public function parse(Request $request);
+    public function parse(RequestInterface $request);
 }

@@ -18,7 +18,10 @@ class Init implements IEventListener
      */
     public function handle(EventParam $e)
     {
-        Tool::initTool();
+        if('cli' === PHP_SAPI)
+        {
+            Tool::initTool();
+        }
     }
 
 }

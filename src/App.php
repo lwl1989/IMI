@@ -71,8 +71,35 @@ abstract class App
      * @param string $namespace 应用命名空间
      * @return void
      */
-    public static function run($namespace)
+    public static function run($namespace = null)
     {
+        if('cli' === PHP_SAPI)
+        {
+            Args::init(2);
+        }
+
+        if(null === $namespace)
+        {
+            $namespace = Args::get('appNamespace');
+            if(null === $namespace)
+            {
+                if('cli' === PHP_SAPI)
+                {
+                    $config = include File::path(dirname($_SERVER['PWD'] . DIRECTORY_SEPARATOR . $_SERVER['SCRIPT_FILENAME'], 2), 'config/config.php');
+                }
+                else
+                {
+                    $config = include File::path(dirname($_SERVER['SCRIPT_FILENAME']), 'config/config.php');
+                }
+                if(!isset($config['namespace']))
+                {
+                    echo 'Has no namespace, please add arg: -appNamespace "Your App Namespace"', PHP_EOL;
+                    exit;
+                }
+                $namespace = $config['namespace'];
+            }
+        }
+
         static::$namespace = $namespace;
         static::initFramework();
     }
@@ -91,25 +118,37 @@ abstract class App
         $subPath = Random::letterAndNumber(32, 32);
         // 注解处理
         static::$annotation = Annotation::getInstance();
-        // 框架运行时缓存支持
-        if('server/start' === $_SERVER['argv'][1])
+        if('cli' === PHP_SAPI)
         {
-            $result = false;
+            // 框架运行时缓存支持
+            if('server/start' === $_SERVER['argv'][1])
+            {
+                $cacheResult = false;
+            }
+            else
+            {
+                // 尝试加载
+                $cacheResult = App::loadRuntimeInfo(Imi::getRuntimePath('imi-runtime.cache'));
+            }
         }
         else
         {
             // 尝试加载
-            $result = App::loadRuntimeInfo(Imi::getRuntimePath('imi-runtime.cache'));
+            $cacheResult = App::loadRuntimeInfo(Imi::getRuntimePath('runtime.cache'));
+            // static::$annotation->init(MainHelper::getMains());
+            // $cacheResult = true;
         }
-        if(!$result)
+
+        if(!$cacheResult)
         {
             // 不使用缓存时去扫描
             static::$annotation->init([
                 MainHelper::getMain('Imi', 'Imi'),
             ]);
         }
-        Event::trigger('IMI.INITED');
+
         static::$isInited = true;
+        Event::trigger('IMI.INITED');
     }
 
     /**

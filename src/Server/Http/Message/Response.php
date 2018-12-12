@@ -42,7 +42,7 @@ class Response extends \Imi\Util\Http\Response
      */
     protected $serverInstance;
     
-    public function __construct(\Imi\Server\Base $server, \swoole_http_response $response)
+    public function __construct(?\Imi\Server\Base $server, ?\swoole_http_response $response)
     {
         $this->swooleResponse = $response;
         $this->serverInstance = $server;

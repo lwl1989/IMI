@@ -5,9 +5,9 @@ use Imi\Util\Imi;
 use Imi\Util\Text;
 use Imi\Bean\Annotation\Bean;
 use Imi\Server\Route\BaseRoute;
-use Imi\Server\Http\Message\Request;
-use Imi\Server\Route\Annotation\Route as RouteAnnotation;
 use Imi\Server\Route\RouteCallable;
+use Psr\Http\Message\RequestInterface;
+use Imi\Server\Route\Annotation\Route as RouteAnnotation;
 
 /**
  * @Bean("HttpRoute")
@@ -50,7 +50,7 @@ class HttpRoute extends BaseRoute
      * @param Request $request
      * @return array
      */
-    public function parse(Request $request)
+    public function parse(RequestInterface $request)
     {
         foreach($this->rules as $url => $items)
         {
@@ -90,7 +90,7 @@ class HttpRoute extends BaseRoute
      * @param array $params url路由中的自定义参数
      * @return array
      */
-    private function checkUrl(Request $request, string $url, &$params)
+    private function checkUrl(RequestInterface $request, string $url, &$params)
     {
         $pathInfo = $request->getServerParam('path_info');
         if(!isset($this->urlCheckCache[$pathInfo][$url]))
@@ -176,7 +176,7 @@ class HttpRoute extends BaseRoute
      * @param mixed $method
      * @return boolean
      */
-    private function checkMethod(Request $request, $method)
+    private function checkMethod(RequestInterface $request, $method)
     {
         if(Text::isEmpty($method))
         {
@@ -198,7 +198,7 @@ class HttpRoute extends BaseRoute
      * @param mixed $domain
      * @return boolean
      */
-    private function checkDomain(Request $request, $domain, &$params)
+    private function checkDomain(RequestInterface $request, $domain, &$params)
     {
         $params = [];
         if(Text::isEmpty($domain))
@@ -231,7 +231,7 @@ class HttpRoute extends BaseRoute
      * @param mixed $params
      * @return boolean
      */
-    private function checkParamsGet(Request $request, $params)
+    private function checkParamsGet(RequestInterface $request, $params)
     {
         if(empty($params))
         {
@@ -249,7 +249,7 @@ class HttpRoute extends BaseRoute
      * @param mixed $params
      * @return boolean
      */
-    private function checkParamsPost(Request $request, $params)
+    private function checkParamsPost(RequestInterface $request, $params)
     {
         if(empty($params))
         {
@@ -266,7 +266,7 @@ class HttpRoute extends BaseRoute
      * @param mixed $header
      * @return boolean
      */
-    private function checkHeader(Request $request, $header)
+    private function checkHeader(RequestInterface $request, $header)
     {
         if(empty($header))
         {
@@ -283,7 +283,7 @@ class HttpRoute extends BaseRoute
      * @param mixed $requestMime
      * @return boolean
      */
-    private function checkRequestMime(Request $request, $requestMime)
+    private function checkRequestMime(RequestInterface $request, $requestMime)
     {
         if(empty($requestMime))
         {

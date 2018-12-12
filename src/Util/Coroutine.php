@@ -1,6 +1,15 @@
 <?php
 namespace Imi\Util;
 
+if('cli' !== PHP_SAPI && !class_exists(\Swoole\Coroutine::class))
+{
+    class Coroutine
+    {
+        
+    }
+    return;
+}
+
 abstract class Coroutine extends \Swoole\Coroutine
 {
     /**

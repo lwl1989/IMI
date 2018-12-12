@@ -3,6 +3,17 @@ namespace Imi\Redis;
 
 use Imi\Util\Defer;
 
+if('cli' !== PHP_SAPI && !class_exists(\Swoole\Coroutine\Redis::class))
+{
+    class CoroutineRedisHandler
+    {
+        public function __construct()
+        {
+            throw new \RuntimeException(sprintf('Can not new %s', __CLASS__));
+        }
+    }
+    return;
+}
 /**
  * @method mixed deferAppend($key, $value)
  * @method mixed deferAuth($password)

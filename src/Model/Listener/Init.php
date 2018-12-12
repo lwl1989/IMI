@@ -28,25 +28,30 @@ class Init implements IEventListener
      */
     public function handle(EventParam $e)
     {
-        if('server' !== Tool::getToolName() || 'start' !== Tool::getToolOperation())
+        $isCli = 'cli' === PHP_SAPI;
+
+        if($isCli && 'server' !== Tool::getToolName() || 'start' !== Tool::getToolOperation())
         {
             return;
         }
 
         $runtimeInfo = App::getRuntimeInfo();
 
-        // 初始化 MemoryTable
-        foreach($runtimeInfo->memoryTable as $item)
+        if($isCli)
         {
-            $memoryTableAnnotation = $item['annotation'];
-            MemoryTableManager::addName($memoryTableAnnotation->name, [
-                'size'                  => $memoryTableAnnotation->size,
-                'conflictProportion'    => $memoryTableAnnotation->conflictProportion,
-                'columns'               => $item['columns'],
-            ]);
-        }
+            // 初始化 MemoryTable
+            foreach($runtimeInfo->memoryTable as $item)
+            {
+                $memoryTableAnnotation = $item['annotation'];
+                MemoryTableManager::addName($memoryTableAnnotation->name, [
+                    'size'                  => $memoryTableAnnotation->size,
+                    'conflictProportion'    => $memoryTableAnnotation->conflictProportion,
+                    'columns'               => $item['columns'],
+                ]);
+            }
 
-        MemoryTableManager::init();
+            MemoryTableManager::init();
+        }
     }
 
 }

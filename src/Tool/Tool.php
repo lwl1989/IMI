@@ -117,7 +117,7 @@ abstract class Tool
      * 初始化
      * @return void
      */
-    private static function init()
+    public static function init()
     {
         // 仅初始化项目及组件
         $initMains = [Helper::getMain(App::getNamespace())];

@@ -15,7 +15,14 @@ abstract class RequestContext
      */
     public static function create()
     {
-        $coID = Coroutine::getuid();
+        if('cli' === PHP_SAPI)
+        {
+            $coID = Coroutine::getuid();
+        }
+        else
+        {
+            $coID = 1;
+        }
         if(!isset(static::$context[$coID]))
         {
             static::$context[$coID] = [];
@@ -32,7 +39,14 @@ abstract class RequestContext
      */
     public static function destroy()
     {
-        $coID = Coroutine::getuid();
+        if('cli' === PHP_SAPI)
+        {
+            $coID = Coroutine::getuid();
+        }
+        else
+        {
+            $coID = 1;
+        }
         if(isset(static::$context[$coID]))
         {
             unset(static::$context[$coID]);
@@ -49,7 +63,15 @@ abstract class RequestContext
      */
     public static function exsits()
     {
-        return isset(static::$context[Coroutine::getuid()]);
+        if('cli' === PHP_SAPI)
+        {
+            $coID = Coroutine::getuid();
+        }
+        else
+        {
+            $coID = 1;
+        }
+        return isset(static::$context[$coID]);
     }
 
     /**
@@ -60,7 +82,14 @@ abstract class RequestContext
      */
     public static function get($name, $default = null)
     {
-        $coID = Coroutine::getuid();
+        if('cli' === PHP_SAPI)
+        {
+            $coID = Coroutine::getuid();
+        }
+        else
+        {
+            $coID = 1;
+        }
         if(!isset(static::$context[$coID]))
         {
             throw new \RuntimeException('get context data failed, current context is not found');
@@ -83,7 +112,14 @@ abstract class RequestContext
      */
     public static function set($name, $value)
     {
-        $coID = Coroutine::getuid();
+        if('cli' === PHP_SAPI)
+        {
+            $coID = Coroutine::getuid();
+        }
+        else
+        {
+            $coID = 1;
+        }
         if(!isset(static::$context[$coID]))
         {
             throw new \RuntimeException('set context data failed, current context is not found');
@@ -97,7 +133,14 @@ abstract class RequestContext
      */
     public static function getContext()
     {
-        $coID = Coroutine::getuid();
+        if('cli' === PHP_SAPI)
+        {
+            $coID = Coroutine::getuid();
+        }
+        else
+        {
+            $coID = 1;
+        }
         if(!isset(static::$context[$coID]))
         {
             throw new \RuntimeException('get context failed, current context is not found');
@@ -121,7 +164,14 @@ abstract class RequestContext
      */
     public static function getServerBean($name, ...$params)
     {
-        return static::getServer()->getBean($name, ...$params);
+        if('cli' === PHP_SAPI)
+        {
+            return static::getServer()->getBean($name, ...$params);
+        }
+        else
+        {
+            return App::getBean($name, ...$params);
+        }
     }
 
     /**

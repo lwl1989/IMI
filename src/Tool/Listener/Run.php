@@ -18,7 +18,10 @@ class Run implements IEventListener
      */
     public function handle(EventParam $e)
     {
-        Tool::run();
+        if('cli' === PHP_SAPI)
+        {
+            Tool::run();
+        }
     }
 
 }
