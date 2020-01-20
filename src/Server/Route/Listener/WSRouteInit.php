@@ -1,12 +1,13 @@
 <?php
 namespace Imi\Server\Route\Listener;
 
+use Imi\Config;
 use Imi\Main\Helper;
 use Imi\ServerManage;
-use Imi\RequestContext;
 use Imi\Event\EventParam;
 use Imi\Event\IEventListener;
 use Imi\Bean\Annotation\Listener;
+use Imi\Server\Route\TMiddleware;
 use Imi\Server\Route\RouteCallable;
 use Imi\Bean\Annotation\AnnotationManager;
 use Imi\Server\Route\Parser\WSControllerParser;
@@ -20,6 +21,8 @@ use Imi\Server\Route\Annotation\WebSocket\WSMiddleware;
  */
 class WSRouteInit implements IEventListener
 {
+    use TMiddleware;
+
     /**
      * 事件处理方法
      * @param EventParam $e
@@ -44,27 +47,21 @@ class WSRouteInit implements IEventListener
             {
                 continue;
             }
-            RequestContext::create();
-            RequestContext::set('server', $server);
+            /** @var \Imi\Server\WebSocket\Route\WSRoute $route*/
             $route = $server->getBean('WSRoute');
             foreach($controllerParser->getByServer($name) as $className => $classItem)
             {
-                $classAnnotation = $classItem['annotation'];
+                /** @var \Imi\Server\Route\Annotation\WebSocket\WSController $classAnnotation */
+                $classAnnotation = $classItem->getAnnotation();
                 // 类中间件
                 $classMiddlewares = [];
                 foreach(AnnotationManager::getClassAnnotations($className, WSMiddleware::class) ?? [] as $middleware)
                 {
-                    if(is_array($middleware->middlewares))
-                    {
-                        $classMiddlewares = array_merge($classMiddlewares, $middleware->middlewares);
-                    }
-                    else
-                    {
-                        $classMiddlewares[] = $middleware->middlewares;
-                    }
+                    $classMiddlewares = array_merge($classMiddlewares, $this->getMiddlewares($middleware->middlewares, $name));
                 }
                 foreach(AnnotationManager::getMethodsAnnotations($className, WSAction::class) as $methodName => $actionAnnotations)
                 {
+                    /** @var \Imi\Server\Route\Annotation\WebSocket\WSRoute[] $routes */
                     $routes = AnnotationManager::getMethodAnnotations($className, $methodName, WSRoute::class);
                     if(!isset($routes[0]))
                     {
@@ -74,27 +71,26 @@ class WSRouteInit implements IEventListener
                     $methodMiddlewares = [];
                     foreach(AnnotationManager::getMethodAnnotations($className, $methodName, WSMiddleware::class) ?? [] as $middleware)
                     {
-                        if(is_array($middleware->middlewares))
-                        {
-                            $methodMiddlewares = array_merge($methodMiddlewares, $middleware->middlewares);
-                        }
-                        else
-                        {
-                            $methodMiddlewares[] = $middleware->middlewares;
-                        }
+                        $methodMiddlewares = array_merge($methodMiddlewares, $this->getMiddlewares($middleware->middlewares, $name));
                     }
                     // 最终中间件
                     $middlewares = array_values(array_unique(array_merge($classMiddlewares, $methodMiddlewares)));
                     
                     foreach($routes as $routeItem)
                     {
-                        $route->addRuleAnnotation($routeItem, new RouteCallable($className, $methodName), [
+                        $routeItem = clone $routeItem;
+                        // 方法上的 @WSRoute 未设置 route，则使用 @WSController 中的
+                        if(null === $routeItem->route)
+                        {
+                            $routeItem->route = $classAnnotation->route;
+                        }
+                        $route->addRuleAnnotation($routeItem, new RouteCallable($server, $className, $methodName), [
                             'middlewares' => $middlewares,
+                            'singleton'   => null === $classAnnotation->singleton ? Config::get('@server.' . $name . '.controller.singleton', false) : $classAnnotation->singleton,
                         ]);
                     }
                 }
             }
-            RequestContext::destroy();
         }
     }
 
@@ -120,7 +116,7 @@ class WSRouteInit implements IEventListener
                 }
                 else
                 {
-                    $callable = new RouteCallable($routeOption['controller'], $routeOption['method']);
+                    $callable = new RouteCallable($server, $routeOption['controller'], $routeOption['method']);
                 }
                 $route->addRuleAnnotation($routeAnnotation, $callable, [
                     'middlewares' => $routeOption['middlewares'],

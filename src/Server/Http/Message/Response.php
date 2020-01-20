@@ -8,7 +8,7 @@ class Response extends \Imi\Util\Http\Response
 {
     /**
      * swoole响应对象
-     * @var \swoole_http_response
+     * @var \Swoole\Http\Response
      */
     protected $swooleResponse;
 
@@ -19,34 +19,44 @@ class Response extends \Imi\Util\Http\Response
     protected $cookies = [];
 
     /**
-     * GZIP启用状态，默认禁用
-     * @var boolean
-     */
-    protected $gzipStatus = false;
-
-    /**
-     * gzip压缩等级1-9，默认为5
-     * @var int
-     */
-    protected $gzipLevel = 5;
-    
-    /**
-     * 是否已结束请求
-     * @var boolean
-     */
-    protected $isEnded = false;
-
-    /**
      * 对应的服务器
      * @var \Imi\Server\Base
      */
     protected $serverInstance;
-    
-    public function __construct(\Imi\Server\Base $server, \swoole_http_response $response)
+
+    /**
+     * 空对象缓存
+     *
+     * @var static
+     */
+    protected static $emptyInstance;
+
+    public function __construct(\Imi\Server\Base $server, \Swoole\Http\Response $response)
     {
+        $response->isEnded = false;
         $this->swooleResponse = $response;
         $this->serverInstance = $server;
         parent::__construct();
+    }
+
+    /**
+     * 获取实例对象
+     *
+     * @param \Imi\Server\Base $server
+     * @param \Swoole\Http\Response $response
+     * @return static
+     */
+    public static function getInstance(\Imi\Server\Base $server, \Swoole\Http\Response $response)
+    {
+        if(null === static::$emptyInstance)
+        {
+            static::$emptyInstance = new static($server, $response);
+        }
+        $instance = clone static::$emptyInstance;
+        $instance->serverInstance = $server;
+        $instance->swooleResponse = $response;
+        $response->isEnded = false;
+        return $instance;
     }
 
     /**
@@ -109,40 +119,37 @@ class Response extends \Imi\Util\Http\Response
     }
 
     /**
-     * 设置GZIP压缩
-     * @param bool $status
-     * @param int $level
-     * @return void
-     */
-    public function withGzip(boolean $status, $level = null)
-    {
-        $self = clone $this;
-        $self->gzipStatus = $status;
-        if(null !== $level)
-        {
-            $self->gzipLevel = $level;
-        }
-        return $self;
-    }
-
-    /**
      * 发送头部信息，没有特别需求，无需手动调用
      * @return static
      */
     public function sendHeaders()
     {
         // cookie
-        foreach($this->cookies as $cookie)
+        if($this->cookies)
         {
-            $this->swooleResponse->cookie($cookie['key'], $cookie['value'], $cookie['expire'] ?? 0, $cookie['path'] ?? '/', $cookie['domain'] ?? '', $cookie['secure'] ?? false, $cookie['httponly'] ?? false);
+            foreach($this->cookies as $cookie)
+            {
+                $this->swooleResponse->cookie($cookie['key'], $cookie['value'], $cookie['expire'] ?? 0, $cookie['path'] ?? '/', $cookie['domain'] ?? '', $cookie['secure'] ?? false, $cookie['httponly'] ?? false);
+            }
         }
         // header
-        foreach($this->getHeaders() as $name => $headers)
+        foreach($this->headers as $name => $headers)
         {
             $this->swooleResponse->header($name, $this->getHeaderLine($name));
         }
+        // trailer
+        if($this->trailers)
+        {
+            foreach($this->trailers as $name => $value)
+            {
+                $this->swooleResponse->trailer($name, $value);
+            }
+        }
         // status
-        $this->swooleResponse->status($this->getStatusCode());
+        if(StatusCode::OK !== $this->statusCode)
+        {
+            $this->swooleResponse->status($this->statusCode);
+        }
         return $this;
     }
 
@@ -152,14 +159,9 @@ class Response extends \Imi\Util\Http\Response
      */
     public function send()
     {
-        // gzip支持
-        if($this->gzipStatus)
-        {
-            $this->swooleResponse->gzip($this->gzipLevel);
-        }
+        $this->swooleResponse->isEnded = true;
         $this->sendHeaders();
         $this->swooleResponse->end($this->getBody());
-        $this->isEnded = true;
         return $this;
     }
 
@@ -172,17 +174,17 @@ class Response extends \Imi\Util\Http\Response
      */
     public function sendFile(string $filename, int $offset = 0, int $length = 0)
     {
+        $this->swooleResponse->isEnded = true;
         $this->sendHeaders();
         $this->swooleResponse->sendfile($filename, $offset, $length);
-        $this->isEnded = true;
         return $this;
     }
 
     /**
      * 获取swoole响应对象
-     * @return \swoole_http_response
+     * @return \Swoole\Http\Response
      */
-    public function getSwooleResponse(): \swoole_http_response
+    public function getSwooleResponse(): \Swoole\Http\Response
     {
         return $this->swooleResponse;
     }
@@ -202,6 +204,6 @@ class Response extends \Imi\Util\Http\Response
      */
     public function isEnded()
     {
-        return $this->isEnded;
+        return $this->swooleResponse->isEnded;
     }
 }

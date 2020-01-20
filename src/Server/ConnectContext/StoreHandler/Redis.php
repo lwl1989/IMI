@@ -3,11 +3,15 @@ namespace Imi\Server\ConnectContext\StoreHandler;
 
 use Imi\Worker;
 use Imi\Log\Log;
+use Imi\Lock\Lock;
+use Imi\Event\Event;
 use Imi\Util\Swoole;
 use Imi\ServerManage;
 use Imi\RequestContext;
 use Imi\Pool\PoolManager;
 use Imi\Bean\Annotation\Bean;
+use Imi\Util\AtomicManager;
+use Imi\App;
 
 /**
  * 连接上下文存储处理器-Redis
@@ -34,7 +38,7 @@ class Redis implements IHandler
      * 
      * @var string
      */
-    protected $key = 'imi:connect_context';
+    protected $key;
 
     /**
      * 心跳时间，单位：秒
@@ -65,6 +69,13 @@ class Redis implements IHandler
     protected $dataDecode = null;
     
     /**
+     * 锁 ID
+     *
+     * @var string
+     */
+    protected $lockId;
+
+    /**
      * 心跳Timer的ID
      *
      * @var int
@@ -79,11 +90,20 @@ class Redis implements IHandler
 
     public function __init()
     {
+        if(null === $this->key)
+        {
+            $this->key = 'imi:' . App::getNamespace() . ':connect_context';
+        }
         if(null === $this->redisPool)
         {
             return;
         }
-        if(0 === Worker::getWorkerID())
+        if(!$this->lockId)
+        {
+            throw new \RuntimeException('ConnectContextRedis lockId must be set');
+        }
+        $workerId = Worker::getWorkerID();
+        if(0 === $workerId)
         {
             $this->useRedis(function($resource, $redis){
                 // 判断master进程pid
@@ -117,6 +137,11 @@ class Redis implements IHandler
                 }
                 $this->startPing($redis);
             });
+            AtomicManager::wakeup('imi.ConnectContextRedisLock', Worker::getWorkerNum());
+        }
+        else if($workerId > 0)
+        {
+            AtomicManager::wait('imi.ConnectContextRedisLock');
         }
     }
 
@@ -151,7 +176,11 @@ class Redis implements IHandler
         if($this->ping($redis))
         {
             // 心跳定时器
-            $this->timerID = \swoole_timer_tick($this->heartbeatTimespan * 1000, [$this, 'pingTimer']);
+            $this->timerID = \Swoole\Timer::tick($this->heartbeatTimespan * 1000, [$this, 'pingTimer']);
+            Event::on('IMI.MAIN_SERVER.WORKER.EXIT', function(){
+                \Swoole\Timer::clear($this->timerID);
+                $this->timerID = null;
+            }, \Imi\Util\ImiPriority::IMI_MIN);
         }
     }
 
@@ -220,7 +249,7 @@ class Redis implements IHandler
     {
         if(null !== $this->timerID)
         {
-            \swoole_timer_clear($this->timerID);
+            \Swoole\Timer::clear($this->timerID);
         }
     }
 
@@ -318,6 +347,27 @@ class Redis implements IHandler
             $redis->select($this->redisDb);
             return $callback($resource, $redis);
         });
+    }
+    
+    /**
+     * 加锁
+     *
+     * @param callable $callable
+     * @return boolean
+     */
+    public function lock($callable = null)
+    {
+        return Lock::lock($this->lockId, $callable);
+    }
+
+    /**
+     * 解锁
+     *
+     * @return boolean
+     */
+    public function unlock()
+    {
+        return Lock::unlock($this->lockId);
     }
 
 }

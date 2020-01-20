@@ -2,6 +2,7 @@
 namespace Imi\Server\WebSocket;
 
 use Imi\App;
+use Imi\Util\Bit;
 use Imi\Server\Base;
 use Imi\ServerManage;
 use Imi\Bean\Annotation\Bean;
@@ -18,13 +19,21 @@ use Imi\Server\Event\Param\HandShakeEventParam;
 class Server extends Base
 {
     /**
+     * 是否为 wss 服务
+     *
+     * @var bool
+     */
+    private $wss;
+
+    /**
      * 创建 swoole 服务器对象
      * @return void
      */
     protected function createServer()
     {
         $config = $this->getServerInitConfig();
-        $this->swooleServer = new \swoole_websocket_server($config['host'], $config['port'], $config['mode'], $config['sockType']);
+        $this->swooleServer = new \Swoole\WebSocket\Server($config['host'], $config['port'], $config['mode'], $config['sockType']);
+        $this->wss = defined('SWOOLE_SSL') && Bit::has($config['sockType'], SWOOLE_SSL);
     }
 
     /**
@@ -36,6 +45,11 @@ class Server extends Base
         $config = $this->getServerInitConfig();
         $this->swooleServer = ServerManage::getServer('main')->getSwooleServer();
         $this->swoolePort = $this->swooleServer->addListener($config['host'], $config['port'], $config['sockType']);
+        if(!isset($this->config['configs']['open_websocket_protocol']))
+        {
+            $this->config['configs']['open_websocket_protocol'] = true;
+        }
+        $this->wss = defined('SWOOLE_SSL') && Bit::has($config['sockType'], SWOOLE_SSL);
     }
 
     /**
@@ -60,46 +74,64 @@ class Server extends Base
     {
         $server = $this->swoolePort ?? $this->swooleServer;
 
-        $server->on('handShake', function(\swoole_http_request $swooleRequest, \swoole_http_response $swooleResponse){
-            try{
-                $request = new Request($this, $swooleRequest);
-                $response = new Response($this, $swooleResponse);
-                $this->trigger('handShake', [
-                    'request'   => &$request,
-                    'response'  => &$response,
-                ], $this, HandShakeEventParam::class);
-            }
-            catch(\Throwable $ex)
-            {
-                App::getBean('ErrorLog')->onException($ex);
-            }
-        });
+        if($event = ($this->config['events']['handshake'] ?? true))
+        {
+            $server->on('handshake', is_callable($event) ? $event : function(\Swoole\Http\Request $swooleRequest, \Swoole\Http\Response $swooleResponse){
+                try{
+                    $this->trigger('handShake', [
+                        'request'   => new Request($this, $swooleRequest),
+                        'response'  => new Response($this, $swooleResponse),
+                    ], $this, HandShakeEventParam::class);
+                }
+                catch(\Throwable $ex)
+                {
+                    App::getBean('ErrorLog')->onException($ex);
+                }
+            });
+        }
 
-        $server->on('message', function (\swoole_websocket_server $server, \swoole_websocket_frame $frame) {
-            try{
-                $this->trigger('message', [
-                    'server'    => $this,
-                    'frame'     => $frame,
-                ], $this, MessageEventParam::class);
-            }
-            catch(\Throwable $ex)
-            {
-                App::getBean('ErrorLog')->onException($ex);
-            }
-        });
+        if($event = ($this->config['events']['message'] ?? true))
+        {
+            $server->on('message', is_callable($event) ? $event : function ($server, \Swoole\WebSocket\Frame $frame) {
+                try{
+                    $this->trigger('message', [
+                        'server'    => $this,
+                        'frame'     => $frame,
+                    ], $this, MessageEventParam::class);
+                }
+                catch(\Throwable $ex)
+                {
+                    App::getBean('ErrorLog')->onException($ex);
+                }
+            });
+        }
 
-        $server->on('close', function(\swoole_http_server $server, $fd, $reactorID){
-            try{
-                $this->trigger('close', [
-                    'server'    => $this,
-                    'fd'        => $fd,
-                    'reactorID' => $reactorID,
-                ], $this, CloseEventParam::class);
-            }
-            catch(\Throwable $ex)
-            {
-                App::getBean('ErrorLog')->onException($ex);
-            }
-        });
+        if($event = ($this->config['events']['close'] ?? true))
+        {
+            $server->on('close', is_callable($event) ? $event : function($server, $fd, $reactorID){
+                try{
+                    $this->trigger('close', [
+                        'server'    => $this,
+                        'fd'        => $fd,
+                        'reactorID' => $reactorID,
+                    ], $this, CloseEventParam::class);
+                }
+                catch(\Throwable $ex)
+                {
+                    App::getBean('ErrorLog')->onException($ex);
+                }
+            });
+        }
     }
+
+    /**
+     * 是否为 wss 服务
+     *
+     * @return boolean
+     */
+    public function isSSL()
+    {
+        return $this->wss;
+    }
+
 }

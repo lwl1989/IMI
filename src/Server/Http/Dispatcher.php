@@ -20,7 +20,13 @@ class Dispatcher
      */
     protected $middlewares = [];
 
-    public function dispatch($request)
+    /**
+     * 调度
+     *
+     * @param \Imi\Server\Http\Message\Request $request
+     * @return \Imi\Server\Http\Message\Response
+     */
+    public function dispatch($request): Response
     {
         $requestHandler = new RequestHandler($this->getMiddlewares());
         $response = $requestHandler->handle($request);
@@ -28,12 +34,13 @@ class Dispatcher
         {
             $response->send();
         }
+        return $response;
     }
 
     protected function getMiddlewares()
     {
         return array_merge($this->middlewares, [
-
+            \Imi\Server\Http\Middleware\ActionWrapMiddleware::class,
         ]);
     }
 }

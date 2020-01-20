@@ -2,23 +2,16 @@
 namespace Imi\Listener;
 
 use Imi\App;
-use Imi\Config;
-use Imi\Worker;
-use Imi\Util\File;
+use Imi\Util\Imi;
 use Imi\Main\Helper;
-use Imi\Util\Coroutine;
-use Imi\Bean\Annotation;
-use Imi\Pool\PoolConfig;
-use Imi\Pool\PoolManager;
-use Imi\Cache\CacheManager;
 use Imi\Bean\Annotation\Listener;
-use Imi\Util\CoroutineChannelManager;
+use Imi\Util\Process\ProcessType;
 use Imi\Server\Event\Param\WorkerStartEventParam;
 use Imi\Server\Event\Listener\IWorkerStartEventListener;
-use Imi\Util\Imi;
+use Imi\Util\Process\ProcessAppContexts;
 
 /**
- * @Listener(eventName="IMI.MAIN_SERVER.WORKER.START",priority=PHP_INT_MAX)
+ * @Listener(eventName="IMI.MAIN_SERVER.WORKER.START",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class BeforeWorkerStart implements IWorkerStartEventListener
 {
@@ -41,10 +34,12 @@ class BeforeWorkerStart implements IWorkerStartEventListener
 
         if($e->server->getSwooleServer()->taskworker)
         {
+            App::set(ProcessAppContexts::PROCESS_TYPE, ProcessType::TASK_WORKER, true);
             Imi::setProcessName('taskWorker');
         }
         else
         {
+            App::set(ProcessAppContexts::PROCESS_TYPE, ProcessType::WORKER, true);
             // swoole 4.1.0 一键协程化
             if(method_exists('\Swoole\Runtime', 'enableCoroutine') && (Helper::getMain(App::getNamespace())->getConfig()['enableCoroutine'] ?? true))
             {
@@ -52,8 +47,6 @@ class BeforeWorkerStart implements IWorkerStartEventListener
             }
             Imi::setProcessName('worker');
         }
-
-        $GLOBALS['WORKER_START_END_RESUME_COIDS'] = [];
 
         // 初始化 worker
         App::initWorker();

@@ -31,6 +31,13 @@ class Result implements IResult
     private $modelClass;
 
     /**
+     * 记录列表
+     *
+     * @var array
+     */
+    private $statementRecords = [];
+
+    /**
      * Undocumented function
      *
      * @param \Imi\Db\Interfaces\IStatement $statement
@@ -42,7 +49,8 @@ class Result implements IResult
         if($statement instanceof IStatement)
         {
             $this->statement = $statement;
-            $this->isSuccess = '' === $this->statement->errorInfo();
+            $this->isSuccess = '00000' === $this->statement->errorCode();
+            $this->statementRecords = $this->statement->fetchAll();
         }
         else
         {
@@ -52,7 +60,7 @@ class Result implements IResult
 
     public function __destruct()
     {
-        StatementManager::unUsingStatement($this->statement);
+        StatementManager::unUsing($this->statement);
     }
 
     /**
@@ -101,8 +109,8 @@ class Result implements IResult
         {
             throw new \RuntimeException('Result is not success!');
         }
-        $result = $this->statement->fetch();
-        if(false === $result)
+        $record = $this->statementRecords[0] ?? null;
+        if(!$record)
         {
             return null;
         }
@@ -113,25 +121,24 @@ class Result implements IResult
         }
         if(null === $className)
         {
-            return $result;
+            return $record;
         }
         else
         {
             if(is_subclass_of($className, Model::class))
             {
-                $object = BeanFactory::newInstance($className, $result);
+                $object = BeanFactory::newInstance($className, $record);
             }
             else
             {
                 $object = BeanFactory::newInstance($className);
-                foreach($result as $k => $v)
+                foreach($record as $k => $v)
                 {
                     $object->$k = $v;
                 }
             }
             if(is_subclass_of($object, IEvent::class))
             {
-                $className = BeanFactory::getObjectClass($object);
                 $object->trigger(ModelEvents::AFTER_QUERY, [
                     'model'      =>  $object,
                 ], $object, AfterQueryEventParam::class);
@@ -151,11 +158,6 @@ class Result implements IResult
         {
             throw new \RuntimeException('Result is not success!');
         }
-        $result = $this->statement->fetchAll();
-        if(false === $result)
-        {
-            return null;
-        }
 
         if(null === $className)
         {
@@ -163,14 +165,14 @@ class Result implements IResult
         }
         if(null === $className)
         {
-            return $result;
+            return $this->statementRecords;
         }
         else
         {
             $list = [];
             $isModelClass = is_subclass_of($className, Model::class);
             $supportIEvent = is_subclass_of($className, IEvent::class);
-            foreach($result as $item)
+            foreach($this->statementRecords as $item)
             {
                 if($isModelClass)
                 {
@@ -202,15 +204,19 @@ class Result implements IResult
         {
             throw new \RuntimeException('Result is not success!');
         }
-        if(is_numeric($column))
+        if(isset($this->statementRecords[0]))
         {
-            return $this->statement->fetchAll(\PDO::FETCH_COLUMN, $column);
+            if(is_numeric($column))
+            {
+                $keys = array_keys($this->statementRecords[0]);
+                return array_column($this->statementRecords, $keys[$column]);
+            }
+            else
+            {
+                return array_column($this->statementRecords, $column);
+            }
         }
-        else
-        {
-            $list = $this->statement->fetchAll();
-            return array_column($list, $column);
-        }
+        return [];
     }
 
     /**
@@ -224,7 +230,20 @@ class Result implements IResult
         {
             throw new \RuntimeException('Result is not success!');
         }
-        return $this->statement->fetchColumn();
+        $record = $this->statementRecords[0] ?? null;
+        if($record)
+        {
+            if(is_numeric($columnKey))
+            {
+                $keys = array_keys($record);
+                return $record[$keys[$columnKey]];
+            }
+            else
+            {
+                return $record[$columnKey];
+            }
+        }
+        return null;
     }
     
     /**
@@ -237,7 +256,7 @@ class Result implements IResult
         {
             throw new \RuntimeException('Result is not success!');
         }
-        return count($this->statement->fetchAll());
+        return count($this->statementRecords);
     }
 
     /**

@@ -1,13 +1,15 @@
 <?php
 namespace Imi\Server\Route\Listener;
 
+use Imi\Config;
 use Imi\Main\Helper;
 use Imi\ServerManage;
-use Imi\RequestContext;
 use Imi\Event\EventParam;
 use Imi\Event\IEventListener;
 use Imi\Bean\Annotation\Listener;
+use Imi\Server\Route\TMiddleware;
 use Imi\Server\Route\RouteCallable;
+use Imi\Bean\Annotation\AnnotationManager;
 use Imi\Server\Route\Annotation\Udp\UdpRoute;
 use Imi\Server\Route\Annotation\Udp\UdpAction;
 use Imi\Server\Route\Parser\UdpControllerParser;
@@ -19,6 +21,8 @@ use Imi\Server\Route\Annotation\Udp\UdpMiddleware;
  */
 class UdpRouteInit implements IEventListener
 {
+    use TMiddleware;
+
     /**
      * 事件处理方法
      * @param EventParam $e
@@ -43,24 +47,16 @@ class UdpRouteInit implements IEventListener
             {
                 continue;
             }
-            RequestContext::create();
-            RequestContext::set('server', $server);
             $route = $server->getBean('UdpRoute');
             foreach($controllerParser->getByServer($name) as $className => $classItem)
             {
-                $classAnnotation = $classItem['annotation'];
+                /** @var \Imi\Server\Route\Annotation\Udp\UdpController $classAnnotation */
+                $classAnnotation = $classItem->getAnnotation();
                 // 类中间件
                 $classMiddlewares = [];
                 foreach(AnnotationManager::getClassAnnotations($className, UdpMiddleware::class) ?? [] as $middleware)
                 {
-                    if(is_array($middleware->middlewares))
-                    {
-                        $classMiddlewares = array_merge($classMiddlewares, $middleware->middlewares);
-                    }
-                    else
-                    {
-                        $classMiddlewares[] = $middleware->middlewares;
-                    }
+                    $classMiddlewares = array_merge($classMiddlewares, $this->getMiddlewares($middleware->middlewares, $name));
                 }
                 foreach(AnnotationManager::getMethodsAnnotations($className, UdpAction::class) as $methodName => $methodItem)
                 {
@@ -73,27 +69,20 @@ class UdpRouteInit implements IEventListener
                     $methodMiddlewares = [];
                     foreach(AnnotationManager::getMethodAnnotations($className, $methodName, UdpMiddleware::class) ?? [] as $middleware)
                     {
-                        if(is_array($middleware->middlewares))
-                        {
-                            $methodMiddlewares = array_merge($methodMiddlewares, $middleware->middlewares);
-                        }
-                        else
-                        {
-                            $methodMiddlewares[] = $middleware->middlewares;
-                        }
+                        $methodMiddlewares = array_merge($methodMiddlewares, $this->getMiddlewares($middleware->middlewares, $name));
                     }
                     // 最终中间件
                     $middlewares = array_values(array_unique(array_merge($classMiddlewares, $methodMiddlewares)));
                     
                     foreach($routes as $routeItem)
                     {
-                        $route->addRuleAnnotation($routeItem, new RouteCallable($className, $methodName), [
+                        $route->addRuleAnnotation($routeItem, new RouteCallable($server, $className, $methodName), [
                             'middlewares' => $middlewares,
+                            'singleton'   => null === $classAnnotation->singleton ? Config::get('@server.' . $name . '.controller.singleton', false) : $classAnnotation->singleton,
                         ]);
                     }
                 }
             }
-            RequestContext::destroy();
         }
     }
 
@@ -119,7 +108,7 @@ class UdpRouteInit implements IEventListener
                 }
                 else
                 {
-                    $callable = new RouteCallable($routeOption['controller'], $routeOption['method']);
+                    $callable = new RouteCallable($server, $routeOption['controller'], $routeOption['method']);
                 }
                 $route->addRuleAnnotation($routeAnnotation, $callable, [
                     'middlewares' => $routeOption['middlewares'],

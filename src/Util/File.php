@@ -2,6 +2,8 @@
 
 namespace Imi\Util;
 
+use Imi\Util\File\FileEnumItem;
+
 /**
  * 文件相关工具类
  */
@@ -55,6 +57,37 @@ abstract class File
     }
 
     /**
+     * 枚举文件，支持自定义中断进入下一级目录
+     *
+     * @param string $dirPath
+     * @return \Imi\Util\File\FileEnumItem[]
+     */
+    public static function enumFile(string $dirPath)
+    {
+        if(!is_dir($dirPath))
+        {
+            return false;
+        }
+        $dh = opendir($dirPath);
+        while ($file = readdir($dh))
+        {
+            if('.' !== $file && '..' !== $file)
+            {
+                $item = new FileEnumItem($dirPath, $file);
+                yield $item;
+                if(is_dir($item) && $item->getContinue())
+                {
+                    foreach(static::enumFile($item) as $fileItem)
+                    {
+                        yield $fileItem;
+                    }
+                }
+            }
+        }
+        closedir($dh);
+    }
+
+    /**
      * 组合路径，目录后的/不是必须
      *
      * @param string ...$args
@@ -73,9 +106,9 @@ abstract class File
         {
             $offset += 3;
         }
-        while(false !== strpos($result, $dsds, $offset))
+        while(false !== ($position = strpos($result, $dsds, $offset)))
         {
-            $result = str_replace($dsds, DIRECTORY_SEPARATOR, $result);
+            $result = substr_replace($result, DIRECTORY_SEPARATOR, $position, 2);
         }
         return $result;
     }
@@ -95,76 +128,141 @@ abstract class File
     }
 
     /**
-     * 读取文件所有内容，优先使用协程，如果不支持则使用传统阻塞方式
-     * @param string $fileName
-     * @return string
-     */
-    public static function readFile($fileName)
-    {
-        if (Coroutine::isIn()) {
-            return Coroutine::readFile($fileName);
-        } else {
-            return file_get_contents($fileName);
-        }
-    }
-
-    /**
-     * 写入文件，优先使用协程，如果不支持则使用传统阻塞方式
-     * @param string $fileName
-     * @param string $content
-     * @param integer $flags
-     * @return boolean
-     */
-    public static function writeFile($fileName, $content, $flags = 0)
-    {
-        if (Coroutine::isIn()) {
-            return Coroutine::writeFile($fileName, $content, $flags);
-        } else {
-            return false !== file_put_contents($fileName, $content, $flags);
-        }
-    }
-
-    /**
      * 创建一个目录
-     * author:lovefc
-     * @param $dir 目录路径
-     * @param $mode 目录的权限
+     * 
+     * @param string $dir 目录路径
+     * @param int $mode 目录的权限
      * @return false|true
      */
     public static function createDir($dir, $mode = 0775)
     {
-        if (empty($dir)) return false;
-        if (!is_dir($dir)) {
-            if(@mkdir($dir, $mode, true)){
-                return true;
-            }else{
-                return false;
-            }
-        } else {
-           return true;
+        if (empty($dir))
+        {
+            return false;
+        }
+        if (is_dir($dir))
+        {
+            return true;
+        }
+        if(@mkdir($dir, $mode, true))
+        {
+            return true;
+        }
+        else
+        {
+            return false;
         }
     }
 
     /**
      * 创建一个文件
-     * author:lovefc
-     * @param $dir 文件路径
-     * @param $mode 文件的权限
+     * 
+     * @param string $dir 文件路径
+     * @param string $content
+     * @param int $mode 文件的权限
      * @return false|true
      */
-    public static function createFile($file, $mode = 0775)
+    public static function createFile($file, $content = '', $mode = 0775)
     {
-        if (empty($file)) return false;
-        if (is_file($file)) {
+        if (empty($file))
+        {
+            return false;
+        }
+        if (is_file($file))
+        {
             return true;
         }
         $dir = dirname($file);
         self::createDir($dir, $mode);
         $fh = @fopen($file, 'a');
-        if ($fh) {
+        if ($fh)
+        {
+            if('' !== $content)
+            {
+                fwrite($fh, $content);
+            }
             fclose($fh);
             return true;
         }
         return false;
     }
+
+    /**
+     * 判断是否为空目录
+     *
+     * @param string $dir
+     * @return boolean
+     */
+    public static function isEmptyDir($dir)
+    {
+        try {
+            $handler = @opendir($dir);
+            if(!$handler)
+            {
+                return true;
+            }
+            while ($file = readdir($handler))
+            {
+                if('.' !== $file && '..' !== $file)
+                {
+                    return false;
+                }
+            }
+        } finally {
+            if($handler)
+            {
+                closedir($handler);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 递归删除目录及目录中所有文件
+     *
+     * @param string $dir
+     * @return boolean
+     */
+    public static function deleteDir($dir)
+    {
+        $dh = opendir($dir);
+        while ($file = readdir($dh))
+        {
+            if('.' !== $file && '..' !== $file)
+            {
+                $fullpath = $dir . '/' . $file;
+                if(is_dir($fullpath))
+                {
+                    self::deleteDir($fullpath);
+                }
+                else
+                {
+                    unlink($fullpath);
+                }
+            }
+        }
+        closedir($dh);
+        return rmdir($dir);
+    }
+
+    /**
+     * 写入内容到文件
+     * 如果目录不存在自动创建多级目录
+     *
+     * @param string $fileName
+     * @param mixed $data
+     * @param integer $flags
+     * @param resource $context
+     * @return int|false
+     */
+    public static function putContents($fileName, $data, $flags = 0, $context = null)
+    {
+        $dir = dirname($fileName);
+        if(!is_dir($dir) && !static::createDir($dir))
+        {
+            throw new \RuntimeException(sprintf('Create dir %s failed', $dir));
+        }
+        return file_put_contents($fileName, $data, $flags, $context);
+    }
+
 }

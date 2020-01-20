@@ -10,7 +10,7 @@ use Imi\Server\Event\Listener\ICloseEventListener;
 
 /**
  * Close事件后置处理
- * @ClassEventListener(className="Imi\Server\WebSocket\Server",eventName="close",priority=PHP_INT_MIN)
+ * @ClassEventListener(className="Imi\Server\WebSocket\Server",eventName="close",priority=Imi\Util\ImiPriority::IMI_MIN)
  */
 class AfterClose implements ICloseEventListener
 {
@@ -24,7 +24,5 @@ class AfterClose implements ICloseEventListener
         // 当前连接离开所有组
         $e->getTarget()->getBean('FdMap')->leaveAll($e->fd);
 
-        ConnectContext::destroy($e->fd);
-        RequestContext::destroy();
     }
 }

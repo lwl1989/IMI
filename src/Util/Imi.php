@@ -26,7 +26,10 @@ abstract class Imi
      */
     public static function parseRule($rule)
     {
-        return \str_replace('/', '\/', \str_replace('\\*', '.*', \preg_quote($rule)));
+        return strtr(\preg_quote($rule), [
+            '/'     =>  '\/',
+            '\\*'   =>  '.*',
+        ]);
     }
 
     /**
@@ -74,7 +77,7 @@ abstract class Imi
      */
     public static function checkCompareRules($rules, $valueCallback)
     {
-        foreach(is_array($rules) ? $rules : [$rules] as $fieldName => $rule)
+        foreach((array)$rules as $fieldName => $rule)
         {
             if(is_numeric($fieldName))
             {
@@ -136,7 +139,7 @@ abstract class Imi
      */
     public static function checkCompareValues($rules, $value)
     {
-        foreach(is_array($rules) ? $rules : [$rules] as $rule)
+        foreach((array)$rules as $rule)
         {
             if(!static::checkCompareValue($rule, $value))
             {
@@ -157,7 +160,7 @@ abstract class Imi
         if(isset($rule[0]) && '!' === $rule[0])
         {
             // 不等
-            return $value !== $rule;
+            return $value !== substr($rule, 1);
         }
         else
         {
@@ -169,16 +172,12 @@ abstract class Imi
     /**
      * 处理按.分隔的规则文本，支持\.转义不分隔
      * @param string $rule
+     * @return string[]|false
      */
     public static function parseDotRule($rule)
     {
         $result = preg_split('#(?<!\\\)\.#', $rule);
-        array_walk($result, function(&$value, $key){
-            if(false !== strpos($value,'\.'))
-            {
-                $value = str_replace('\.', '.', $value);
-            }
-        });
+        $result = str_replace('\.', '.', $result);
         return $result;
     }
 
@@ -301,13 +300,13 @@ abstract class Imi
      */
     public static function getImiCmd($toolName, $operation, $args = [])
     {
-        if(isset($_SERVER['_']) && $_SERVER['SCRIPT_FILENAME'] === $_SERVER['_'])
+        if(isset($_SERVER['_']) && realpath($_SERVER['SCRIPT_FILENAME']) === ($path = realpath($_SERVER['_'])))
         {
-            $cmd = $_SERVER['_'];
+            $cmd = $path;
         }
         else
         {
-            $cmd = ($_SERVER['_'] ?? 'php') . ' ' . $_SERVER['argv'][0];
+            $cmd = ($path ?? 'php') . ' ' . $_SERVER['argv'][0];
         }
         $cmd .= ' ' . $toolName . '/' . $operation;
         if(null !== ($appNamespace = Args::get('appNamespace')))
@@ -339,7 +338,12 @@ abstract class Imi
         $parentPath = Config::get('@app.runtimePath');
         if(null === $parentPath)
         {
-            $parentPath = File::path(Imi::getNamespacePath(App::getNamespace()), '.runtime');
+            $namespacePath = Imi::getNamespacePath($namespace = App::getNamespace());
+            if(null === $namespacePath)
+            {
+                throw new \RuntimeException(sprintf('Cannot found path of namespace %s. You can set the config @app.runtimePath.', $namespace));
+            }
+            $parentPath = File::path($namespacePath, '.runtime');
         }
         File::createDir($parentPath);
         return File::path($parentPath, ...$path);
@@ -490,13 +494,14 @@ abstract class Imi
         };
 
         $runtimeInfo = App::getRuntimeInfo();
-        $annotationsSet = AnnotationManager::getAnnotationPoints(MemoryTable::class, 'Class');
+        $annotationsSet = AnnotationManager::getAnnotationPoints(MemoryTable::class, 'class');
         foreach($annotationsSet as &$item)
         {
-            $item['columns'] = $getMemoryTableColumns(AnnotationManager::getPropertiesAnnotations($item['class'], Column::class)) ?? [];
+            $item = clone $item;
+            $item->columns = $getMemoryTableColumns(AnnotationManager::getPropertiesAnnotations($item->getClass(), Column::class)) ?? [];
         }
         $runtimeInfo->memoryTable = $annotationsSet;
-        $runtimeInfo->annotationParserData = [Annotation::getInstance()->getParser()->getData(), Annotation::getInstance()->getParser()->getFileMap()];
+        $runtimeInfo->annotationParserData = Annotation::getInstance()->getParser()->getStoreData();
         $runtimeInfo->annotationParserParsers = Annotation::getInstance()->getParser()->getParsers();
         $runtimeInfo->annotationManagerAnnotations = AnnotationManager::getAnnotations();
         $runtimeInfo->annotationManagerAnnotationRelation = AnnotationManager::getAnnotationRelation();
@@ -524,18 +529,83 @@ abstract class Imi
         $parser = Annotation::getInstance()->getParser();
         $parser->parseIncr($files);
 
-        AnnotationManager::setAnnotations([]);
-        AnnotationManager::setAnnotationRelation([]);
-
         foreach(App::getRuntimeInfo()->parsersData as $parserClass => $data)
         {
             $parserObject = $parserClass::getInstance();
             $parserObject->setData([]);
         }
 
-        foreach($parser->getData() as $className => $item)
+        foreach($parser->getClasses() as $className)
         {
             $parser->execParse($className);
         }
+
     }
+
+    /**
+     * 停止服务器
+     *
+     * @return void
+     */
+    public static function stopServer()
+    {
+        $fileName = Imi::getRuntimePath(str_replace('\\', '-', App::getNamespace()) . '.pid');
+        if(!is_file($fileName))
+        {
+            throw new \RuntimeException(sprintf('Pid file %s is not exists', $fileName));
+        }
+        $return = [];
+        $pid = json_decode(file_get_contents($fileName), true);
+        if($pid > 0)
+        {
+            $cmd = 'kill ' . $pid['masterPID'];
+            $return['cmd'] = $cmd;
+            $result = `$cmd`;
+            $return['result'] = $result;
+            return $return;
+        }
+        else
+        {
+            throw new \RuntimeException(sprintf('Pid does not exists in file %s', $fileName));
+        }
+    }
+
+    /**
+     * 重新加载服务器
+     *
+     * @return void
+     */
+    public static function reloadServer()
+    {
+        $fileName = Imi::getRuntimePath(str_replace('\\', '-', App::getNamespace()) . '.pid');
+        if(!is_file($fileName))
+        {
+            throw new \RuntimeException(sprintf('Pid file %s is not exists', $fileName));
+        }
+        $return = [];
+        $pid = json_decode(file_get_contents($fileName), true);
+        if($pid > 0)
+        {
+            $cmd = 'kill -USR1 ' . $pid['masterPID'];
+            $return['cmd'] = $cmd;
+            $result = `$cmd`;
+            $return['result'] = $result;
+            return $return;
+        }
+        else
+        {
+            throw new \RuntimeException(sprintf('Pid does not exists in file %s', $fileName));
+        }
+    }
+
+    /**
+     * 检查系统是否支持端口重用
+     *
+     * @return bool
+     */
+    public static function checkReusePort()
+    {
+        return 'Linux' === PHP_OS && version_compare(php_uname('r'), '3.9', '>=');
+    }
+
 }

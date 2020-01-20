@@ -1,10 +1,6 @@
 <?php
 namespace Imi\Log\Handler;
 
-use Imi\Log\Record;
-use Imi\App;
-use Imi\Log\TraceMinimum;
-
 abstract class Base
 {
     /**
@@ -39,13 +35,11 @@ abstract class Base
     protected $traceFormat = '#{index}  {call} called at [{file}:{line}]';
 
     /**
-     * [实验性功能]
-     * 是否精简调用跟踪
-     * 可能会删去Bean类调用、AOP调用跟踪
+     * 限制 trace 条目数量，默认为 -1 不限制
      *
-     * @var boolean
+     * @var integer
      */
-    protected $traceMinimum = false;
+    protected $traceLimit = -1;
 
     /**
      * date()函数支持的格式
@@ -90,12 +84,20 @@ abstract class Base
         'U',
     ];
 
+    /**
+     * date()函数支持的格式缓存文本
+     *
+     * @var string
+     */
+    private $dateFormatsCacheStr;
+
     public function __construct($option = [])
     {
         foreach($option as $k => $v)
         {
             $this->$k = $v;
         }
+        $this->dateFormatsCacheStr = implode('#', static::DATE_FORMATS);
     }
 
     /**
@@ -168,16 +170,6 @@ abstract class Base
     }
 
     /**
-     * 处理日志消息
-     * @param \Imi\Log\Record $record
-     * @return string
-     */
-    public function parseMessage(\Imi\Log\Record $record): string
-    {
-        return str_replace($find, $replace, $record->getMessage());
-    }
-
-    /**
      * 获取日志字符串
      * @param \Imi\Log\Record $record
      * @return string
@@ -191,24 +183,22 @@ abstract class Base
             'trace'         => $this->parseTrace($record),
         ];
 
-        $find = $replace = [];
+        $replaces = [];
         foreach($vars as $key => $value)
         {
             if(is_scalar($value))
             {
-                $find[] = '{' . $key . '}';
-                $replace[] = $value;
+                $replaces['{' . $key . '}'] = $value;
             }
         }
         foreach ($record->getContext() as $key => $value)
         {
             if(is_scalar($value))
             {
-                $find[] = '{' . $key . '}';
-                $replace[] = $value;
+                $replaces['{' . $key . '}'] = $value;
             }
         }
-        $logContent = str_replace($find, $replace, $this->format);
+        $logContent = strtr($this->format, $replaces);
         
         return $this->replaceDateTime($logContent, $record->getLogTime());
     }
@@ -222,23 +212,24 @@ abstract class Base
     {
         $result = [];
         $trace = $record->getTrace();
-        if($this->traceMinimum)
-        {
-            $trace = App::getBean(TraceMinimum::class)->parse($trace);
-        }
         foreach($trace as $index => $vars)
         {
+            if($this->traceLimit > -1 && $index >= $this->traceLimit)
+            {
+                break;
+            }
             $vars['call'] = $this->getTraceCall($vars);
             $vars['index'] = $index;
             $line = $this->traceFormat;
+            $replaces = [];
             foreach($vars as $name => $value)
             {
                 if(is_scalar($value))
                 {
-                    $line = str_replace('{' . $name . '}', (string)$value, $line);
+                    $replaces['{' . $name . '}'] = (string)$value;
                 }
             }
-            $result[] = $line;
+            $result[] = strtr($line, $replaces);
         }
         return implode(PHP_EOL, $result);
     }
@@ -270,7 +261,7 @@ abstract class Base
     public function getTraceArgs($trace)
     {
         $result = [];
-        foreach($trace['args'] as $value)
+        foreach($trace['args'] ?? [] as $value)
         {
             if(is_scalar($value))
             {
@@ -292,10 +283,12 @@ abstract class Base
      */
     protected function replaceDateTime($string, $timestamp)
     {
-        foreach(static::DATE_FORMATS as $format)
+        $list = explode('#', date($this->dateFormatsCacheStr, $timestamp));
+        $replaces = [];
+        foreach($list as $i => $item)
         {
-            $string = str_replace('{' . $format . '}', date($format, $timestamp), $string);
+            $replaces['{' . static::DATE_FORMATS[$i] . '}'] = $item;
         }
-        return $string;
+        return strtr($string, $replaces);
     }
 }

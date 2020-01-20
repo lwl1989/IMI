@@ -3,9 +3,8 @@ namespace Imi\Server\View\Handler;
 
 use Imi\Bean\Annotation\Bean;
 use Imi\Util\Http\Consts\MediaType;
-use Imi\Server\View\Annotation\View;
 use Imi\Server\Http\Message\Response;
-use Imi\Util\Http\Consts\RequestHeader;
+use Imi\Util\Http\Consts\ResponseHeader;
 
 /**
  * Json视图处理器
@@ -36,9 +35,9 @@ class Json implements IHandler
      */
     protected $depth = 512;
 
-    public function handle(View $viewAnnotation, Response $response): Response
+    public function handle($data, array $options, Response $response): Response
     {
-        return $response->withAddedHeader(RequestHeader::CONTENT_TYPE, MediaType::APPLICATION_JSON)
-                        ->write(\json_encode($viewAnnotation->data, $this->options, $this->depth));
+        return $response->withHeader(ResponseHeader::CONTENT_TYPE, MediaType::APPLICATION_JSON)
+                        ->write(\json_encode($data, $this->options, $this->depth));
     }
 }

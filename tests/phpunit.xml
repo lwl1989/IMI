@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit backupGlobals="false"
+         backupStaticAttributes="false"
+         bootstrap="./bootstrap.php"
+         colors="true"
+         convertErrorsToExceptions="true"
+         convertNoticesToExceptions="true"
+         convertWarningsToExceptions="true"
+         processIsolation="false"
+         stopOnFailure="false">
+    <testsuites>
+        <testsuite name="Components">
+            <directory>unit/Component/Tests</directory>
+            <file>*.php</file>
+        </testsuite>
+        <testsuite name="HttpServer">
+            <directory>unit/HttpServer/Tests</directory>
+            <file>*.php</file>
+        </testsuite>
+        <testsuite name="RedisSessionServer">
+            <directory>unit/RedisSessionServer/Tests</directory>
+            <file>*.php</file>
+        </testsuite>
+        <testsuite name="WebSocketServer">
+            <directory>unit/WebSocketServer/Tests</directory>
+            <file>*.php</file>
+        </testsuite>
+        <testsuite name="TCPServer">
+            <directory>unit/TCPServer/Tests</directory>
+            <file>*.php</file>
+        </testsuite>
+        <testsuite name="UDPServer">
+            <directory>unit/UDPServer/Tests</directory>
+            <file>*.php</file>
+        </testsuite>
+        <testsuite name="Performance">
+            <directory>unit/Component/Performance</directory>
+            <file>*.php</file>
+        </testsuite>
+    </testsuites>
+    <listeners>
+        <listener class="Imi\Test\Component\PHPUintListener\ImiListener">
+        </listener>
+    </listeners>
+</phpunit>

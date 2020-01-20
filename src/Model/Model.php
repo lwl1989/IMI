@@ -5,10 +5,10 @@ use Imi\Db\Db;
 use Imi\Util\Text;
 use Imi\Event\Event;
 use Imi\Bean\BeanFactory;
+use Imi\Db\Query\Field;
 use Imi\Model\Relation\Query;
 use Imi\Util\LazyArrayObject;
 use Imi\Model\Relation\Update;
-use Imi\Util\Traits\TBeanRealClass;
 use Imi\Model\Event\ModelEvents;
 use Imi\Db\Query\Interfaces\IQuery;
 use Imi\Db\Query\Interfaces\IResult;
@@ -19,13 +19,14 @@ use Imi\Model\Event\Param\InitEventParam;
  */
 abstract class Model extends BaseModel
 {
-    use TBeanRealClass;
-
     public function __init($data = [])
     {
-        $this->on(ModelEvents::AFTER_INIT, function(InitEventParam $e){
-            ModelRelationManager::initModel($this);
-        }, PHP_INT_MAX);
+        if($this->__meta->hasRelation())
+        {
+            $this->one(ModelEvents::AFTER_INIT, function(InitEventParam $e){
+                ModelRelationManager::initModel($this);
+            }, \Imi\Util\ImiPriority::IMI_MAX);
+        }
         parent::__init($data);
     }
 
@@ -50,6 +51,18 @@ abstract class Model extends BaseModel
     }
 
     /**
+     * 返回一个数据库查询器，查询结果为数组，而不是当前类实例对象
+     * @param string|object $object
+     * @param string|null $poolName 连接池名，为null则取默认
+     * @param int|null $queryType 查询类型；Imi\Db\Query\QueryType::READ/WRITE
+     * @return \Imi\Db\Query\Interfaces\IQuery
+     */
+    public static function dbQuery($object = null, $poolName = null, $queryType = null)
+    {
+        return Db::query($poolName, null, $queryType)->from(static::__getMeta($object)->getTableName());
+    }
+
+    /**
      * 查找一条记录
      * @param callable|mixed ...$ids
      * @return static
@@ -60,6 +73,7 @@ abstract class Model extends BaseModel
         {
             return null;
         }
+        $realClassName = static::__getRealClassName();
         $query = static::query();
         if(is_callable($ids[0]))
         {
@@ -72,32 +86,46 @@ abstract class Model extends BaseModel
             if(is_array($ids[0]))
             {
                 // 键值数组where条件
+                $keys = [];
+                $bindValues = [];
                 foreach($ids[0] as $k => $v)
                 {
-                    $query->where($k, '=', $v);
+                    $keys[] = $k;
+                    $bindValues[':' . $k] = $v;
                 }
+                $query = $query->alias($realClassName . ':find:pk1:' . md5(implode(',', $keys)), function(IQuery $query) use($keys){
+                    foreach($keys as $name)
+                    {
+                        $query->whereRaw(new Field(null, null, $name) . '=:' . $name);
+                    }
+                })->bindValues($bindValues);
             }
             else
             {
                 // 主键值
-                $id = ModelManager::getId(static::__getRealClassName());
-                if(is_string($id))
-                {
-                    $id = [$id];
-                }
+                $id = static::__getMeta()->getId();
+                $keys = [];
+                $bindValues = [];
                 foreach($id as $i => $idName)
                 {
                     if(!isset($ids[$i]))
                     {
                         break;
                     }
-                    $query->where($idName, '=', $ids[$i]);
+                    $keys[] = $idName;
+                    $bindValues[':' . $idName] = $ids[$i];
                 }
+                $query = $query->alias($realClassName . ':find:pk2:' . md5(implode(',', $keys)), function(IQuery $query) use($keys){
+                    foreach($keys as $name)
+                    {
+                        $query->whereRaw(new Field(null, null, $name) . '=:' . $name);
+                    }
+                })->bindValues($bindValues);
             }
         }
 
         // 查找前
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::BEFORE_FIND, [
+        Event::trigger($realClassName . ':' . ModelEvents::BEFORE_FIND, [
             'ids'   => $ids,
             'query' => $query,
         ], null, \Imi\Model\Event\Param\BeforeFindEventParam::class);
@@ -105,7 +133,7 @@ abstract class Model extends BaseModel
         $result = $query->select()->get();
 
         // 查找后
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::AFTER_FIND, [
+        Event::trigger($realClassName . ':' . ModelEvents::AFTER_FIND, [
             'ids'   => $ids,
             'model' => &$result,
         ], null, \Imi\Model\Event\Param\AfterFindEventParam::class);
@@ -120,17 +148,18 @@ abstract class Model extends BaseModel
      */
     public static function select($where = null)
     {
+        $realClassName = static::__getRealClassName();
         $query = static::parseWhere(static::query(), $where);
 
         // 查询前
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::BEFORE_SELECT, [
+        Event::trigger($realClassName . ':' . ModelEvents::BEFORE_SELECT, [
             'query' => $query,
         ], null, \Imi\Model\Event\Param\BeforeSelectEventParam::class);
 
         $result = $query->select()->getArray();
 
         // 查询后
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::AFTER_SELECT, [
+        Event::trigger($realClassName . ':' . ModelEvents::AFTER_SELECT, [
             'result' => &$result,
         ], null, \Imi\Model\Event\Param\AfterSelectEventParam::class);
 
@@ -147,7 +176,7 @@ abstract class Model extends BaseModel
     {
         if(null === $data)
         {
-            $data = static::parseSaveData($this);
+            $data = static::parseSaveData(\iterator_to_array($this), 'insert', $this);
         }
         else if(!$data instanceof \ArrayAccess)
         {
@@ -162,10 +191,17 @@ abstract class Model extends BaseModel
             'query' => $query,
         ], $this, \Imi\Model\Event\Param\BeforeInsertEventParam::class);
 
-        $result = $query->insert($data);
+        $keys = [];
+        foreach($data as $k => $v)
+        {
+            $keys[] = $k;
+        }
+        $result = $query->alias($this->__realClass . ':insert:' . md5(implode(',', $keys)), function(IQuery $query){
+            
+        })->insert($data);
         if($result->isSuccess())
         {
-            foreach(ModelManager::getFields($this) as $name => $column)
+            foreach($this->__meta->getFields() as $name => $column)
             {
                 if($column->isAutoIncrement)
                 {
@@ -182,8 +218,11 @@ abstract class Model extends BaseModel
             'result'=> $result
         ], $this, \Imi\Model\Event\Param\AfterInsertEventParam::class);
 
-        // 子模型插入
-        ModelRelationManager::insertModel($this);
+        if($this->__meta->hasRelation())
+        {
+            // 子模型插入
+            ModelRelationManager::insertModel($this);
+        }
 
         return $result;
     }
@@ -197,10 +236,9 @@ abstract class Model extends BaseModel
     public function update($data = null): IResult
     {
         $query = static::query($this);
-        $query = $this->parseWhereId($query);
         if(null === $data)
         {
-            $data = static::parseSaveData($this);
+            $data = static::parseSaveData(\iterator_to_array($this), 'update', $this);
         }
         else if(!$data instanceof \ArrayAccess)
         {
@@ -214,12 +252,33 @@ abstract class Model extends BaseModel
             'query' => $query,
         ], $this, \Imi\Model\Event\Param\BeforeUpdateEventParam::class);
 
-        if(!isset($query->getOption()->where[0]))
+        $keys = [];
+        foreach($data as $k => $v)
+        {
+            $keys[] = $k;
+        }
+        $keys[] = '#'; // 分隔符
+
+        $conditionId = $bindValues = [];
+        foreach($this->__meta->getId() as $idName)
+        {
+            if(isset($this->$idName))
+            {
+                $bindValues[':c_' . $idName] = $this->$idName;
+                $keys[] = $conditionId[] = $idName;
+            }
+        }
+        if(!isset($conditionId[0]))
         {
             throw new \RuntimeException('use Model->update(), primary key can not be null');
         }
-
-        $result = $query->update($data);
+        $result = $query->alias($this->__realClass . ':update:' . md5(implode(',', $keys)), function(IQuery $query) use($conditionId){
+            // 主键条件加入
+            foreach($conditionId as $idName)
+            {
+                $query->whereRaw(new Field(null, null, $idName) . '=:c_' . $idName);
+            }
+        })->bindValues($bindValues)->update($data);
 
         // 更新后
         $this->trigger(ModelEvents::AFTER_UPDATE, [
@@ -228,8 +287,11 @@ abstract class Model extends BaseModel
             'result'=> $result,
         ], $this, \Imi\Model\Event\Param\AfterUpdateEventParam::class);
 
-        // 子模型更新
-        ModelRelationManager::updateModel($this);
+        if($this->__meta->hasRelation())
+        {
+            // 子模型更新
+            ModelRelationManager::updateModel($this);
+        }
 
         return $result;
     }
@@ -245,7 +307,7 @@ abstract class Model extends BaseModel
         $class = static::__getRealClassName();
         if(Update::hasUpdateRelation($class))
         {
-            $query = Db::query()->table(ModelManager::getTable($class));
+            $query = Db::query()->table(static::__getMeta()->getTableName());
             $query = static::parseWhere($query, $where);
 
             $list = $query->select()->getArray();
@@ -262,10 +324,10 @@ abstract class Model extends BaseModel
             $query = static::query();
             $query = static::parseWhere($query, $where);
 
-            $updateData = static::parseSaveData($data);
+            $updateData = static::parseSaveData($data, 'update');
 
             // 更新前
-            Event::trigger(static::__getRealClassName() . ':' . ModelEvents::BEFORE_BATCH_UPDATE, [
+            Event::trigger($class . ':' . ModelEvents::BEFORE_BATCH_UPDATE, [
                 'data'  => $updateData,
                 'query' => $query,
             ], null, \Imi\Model\Event\Param\BeforeBatchUpdateEventParam::class);
@@ -273,7 +335,7 @@ abstract class Model extends BaseModel
             $result = $query->update($updateData);
     
             // 更新后
-            Event::trigger(static::__getRealClassName() . ':' . ModelEvents::AFTER_BATCH_UPDATE, [
+            Event::trigger($class . ':' . ModelEvents::AFTER_BATCH_UPDATE, [
                 'data'  => $updateData,
                 'result'=> $result,
             ], null, \Imi\Model\Event\Param\BeforeBatchUpdateEventParam::class);
@@ -289,8 +351,7 @@ abstract class Model extends BaseModel
     public function save(): IResult
     {
         $query = static::query($this);
-        $query = $this->parseWhereId($query);
-        $data = static::parseSaveData($this);
+        $data = static::parseSaveData(\iterator_to_array($this), 'save', $this);
 
         // 保存前
         $this->trigger(ModelEvents::BEFORE_SAVE, [
@@ -299,7 +360,35 @@ abstract class Model extends BaseModel
             'query' => $query,
         ], $this, \Imi\Model\Event\Param\BeforeSaveEventParam::class);
 
-        $result = $query->replace($data);
+        $keys = [];
+        foreach($data as $k => $v)
+        {
+            $keys[] = $k;
+        }
+        $result = $query->alias($this->__realClass . ':save:' . md5(implode(',', $keys)), function(IQuery $query){
+            // 主键条件加入
+            foreach($this->__meta->getId() as $idName)
+            {
+                if(isset($this->$idName))
+                {
+                    $query->whereRaw(new Field(null, null, $idName) . '=:' . $idName);
+                }
+            }
+        })->replace($data);
+        if($result->isSuccess())
+        {
+            foreach($this->__meta->getFields() as $name => $column)
+            {
+                if($column->isAutoIncrement)
+                {
+                    if(null === $this[$name])
+                    {
+                        $this[$name] = $result->getLastInsertId();
+                    }
+                    break;
+                }
+            }
+        }
 
         // 保存后
         $this->trigger(ModelEvents::AFTER_SAVE, [
@@ -318,7 +407,6 @@ abstract class Model extends BaseModel
     public function delete(): IResult
     {
         $query = static::query($this);
-        $query = $this->parseWhereId($query);
 
         // 删除前
         $this->trigger(ModelEvents::BEFORE_DELETE, [
@@ -326,11 +414,29 @@ abstract class Model extends BaseModel
             'query' => $query,
         ], $this, \Imi\Model\Event\Param\BeforeDeleteEventParam::class);
 
-        if(!isset($query->getOption()->where[0]))
+        $bindValues = [];
+        $id = $this->__meta->getId();
+        foreach($id as $idName)
+        {
+            if(isset($this->$idName))
+            {
+                $bindValues[$idName] = $this->$idName;
+            }
+        }
+        if(empty($bindValues))
         {
             throw new \RuntimeException('use Model->delete(), primary key can not be null');
         }
-        $result = $query->delete();
+        $result = $query->alias($this->__realClass . ':delete', function(IQuery $query) use($id){
+            // 主键条件加入
+            foreach($id as $idName)
+            {
+                if(isset($this->$idName))
+                {
+                    $query->whereRaw(new Field(null, null, $idName) . '=:' . $idName);
+                }
+            }
+        })->bindValues($bindValues)->delete();
 
         // 删除后
         $this->trigger(ModelEvents::AFTER_DELETE, [
@@ -338,8 +444,11 @@ abstract class Model extends BaseModel
             'result'=> $result,
         ], $this, \Imi\Model\Event\Param\AfterDeleteEventParam::class);
 
-        // 子模型删除
-        ModelRelationManager::deleteModel($this);
+        if($this->__meta->hasRelation())
+        {
+            // 子模型删除
+            ModelRelationManager::deleteModel($this);
+        }
 
         return $result;
     }
@@ -355,7 +464,7 @@ abstract class Model extends BaseModel
         ModelRelationManager::queryModelRelations($this, ...$names);
 
         // 提取属性支持
-        $propertyAnnotations = ModelManager::getExtractPropertys($this);
+        $propertyAnnotations = $this->__meta->getExtractPropertys();
         foreach($names as $name)
         {
             if(isset($propertyAnnotations[$name]))
@@ -386,18 +495,19 @@ abstract class Model extends BaseModel
      */
     public static function deleteBatch($where = null): IResult
     {
+        $realClassName = static::__getRealClassName();
         $query = static::query();
         $query = static::parseWhere($query, $where);
 
         // 删除前
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::BEFORE_BATCH_DELETE, [
+        Event::trigger($realClassName . ':' . ModelEvents::BEFORE_BATCH_DELETE, [
             'query' => $query,
         ], null, \Imi\Model\Event\Param\BeforeBatchDeleteEventParam::class);
 
         $result = $query->delete();
 
         // 删除后
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::AFTER_BATCH_DELETE, [
+        Event::trigger($realClassName . ':' . ModelEvents::AFTER_BATCH_DELETE, [
             'result'=> $result,
         ], null, \Imi\Model\Event\Param\BeforeBatchDeleteEventParam::class);
 
@@ -473,29 +583,6 @@ abstract class Model extends BaseModel
     }
 
     /**
-     * 处理主键where条件
-     * @param IQuery $query
-     * @return IQuery
-     */
-    private function parseWhereId(IQuery $query)
-    {
-        // 主键条件加入
-        $id = ModelManager::getId($this);
-        if(is_string($id))
-        {
-            $id = [$id];
-        }
-        foreach($id as $idName)
-        {
-            if(isset($this->$idName))
-            {
-                $query->where($idName, '=', $this->$idName);
-            }
-        }
-        return $query;
-    }
-
-    /**
      * 处理where条件
      * @param IQuery $query
      * @param array $where
@@ -533,13 +620,16 @@ abstract class Model extends BaseModel
     /**
      * 处理保存的数据
      * @param object|array $data
+     * @param string $type
      * @param object|string $object
      * @return array
      */
-    private static function parseSaveData($data, $object = null)
+    private static function parseSaveData($data, $type, $object = null)
     {
+        $meta = static::__getMeta($object);
+        $realClassName = static::__getRealClassName();
         // 处理前
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::BEFORE_PARSE_DATA, [
+        Event::trigger($realClassName . ':' . ModelEvents::BEFORE_PARSE_DATA, [
             'data'   => &$data,
             'object' => &$object,
         ], null, \Imi\Model\Event\Param\BeforeParseDataEventParam::class);
@@ -557,23 +647,50 @@ abstract class Model extends BaseModel
             }
             $data = $_data;
         }
-        if($object)
-        {
-            $class = BeanFactory::getObjectClass($object);
-        }
-        else
-        {
-            $class = static::__getRealClassName();
-        }
         $result = new LazyArrayObject;
-        foreach(ModelManager::getFields($class) as $name => $column)
+        $canUpdateTime = 'save' === $type || 'update' === $type;
+        $objectIsObject = is_object($object);
+        foreach($meta->getFields() as $name => $column)
         {
             // 虚拟字段不参与数据库操作
             if($column->virtual)
             {
                 continue;
             }
-            if(array_key_exists($name, $data))
+            $columnType = $column->type;
+            // 字段自动更新时间
+            if($canUpdateTime && $column->updateTime)
+            {
+                switch($columnType)
+                {
+                    case 'date':
+                        $value = date('Y-m-d');
+                        break;
+                    case 'time':
+                        $value = date('H:i:s');
+                        break;
+                    case 'datetime':
+                    case 'timestamp':
+                        $value = date('Y-m-d H:i:s');
+                        break;
+                    case 'int':
+                        $value = time();
+                        break;
+                    case 'bigint':
+                        $value = (int)(microtime(true) * 1000);
+                        break;
+                    case 'year':
+                        $value = date('Y');
+                        break;
+                    default:
+                        throw new \RuntimeException(sprintf('Column %s type is %s, can not updateTime', $column->name, $column->type));
+                }
+                if($objectIsObject)
+                {
+                    $object->{$column->name} = $value;
+                }
+            }
+            else if(array_key_exists($name, $data))
             {
                 $value = $data[$name];
             }
@@ -593,7 +710,7 @@ abstract class Model extends BaseModel
             {
                 continue;
             }
-            switch($column->type)
+            switch($columnType)
             {
                 case 'json':
                     if(null !== $value)
@@ -605,11 +722,20 @@ abstract class Model extends BaseModel
             $result[$name] = $value;
         }
 
+        // 更新时无需更新主键
+        if('update' === $type)
+        {
+            foreach($meta->getId() as $id)
+            {
+                unset($result[$id]);
+            }
+        }
+
         // 处理后
-        Event::trigger(static::__getRealClassName() . ':' . ModelEvents::AFTER_PARSE_DATA, [
-            'data'   => &$data,
-            'object' => &$object,
-            'result' => &$result,
+        Event::trigger($realClassName . ':' . ModelEvents::AFTER_PARSE_DATA, [
+            'data'   => &$data,     // 待处理的原始数据
+            'object' => &$object,   // 模型对象，注意可能为 null
+            'result' => &$result,   // 最终保存的数据
         ], null, \Imi\Model\Event\Param\AfterParseDataEventParam::class);
 
         return $result;

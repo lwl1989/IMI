@@ -11,6 +11,7 @@ class Main extends BaseMain
 {
     public function __init()
     {
+
     }
 
     /**

@@ -13,7 +13,7 @@ use Imi\Server\Event\Listener\IReceiveEventListener;
 
 /**
  * Receive事件前置处理
- * @ClassEventListener(className="Imi\Server\TcpServer\Server",eventName="receive",priority=PHP_INT_MAX)
+ * @ClassEventListener(className="Imi\Server\TcpServer\Server",eventName="receive",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class BeforeReceive implements IReceiveEventListener
 {
@@ -26,13 +26,15 @@ class BeforeReceive implements IReceiveEventListener
     {
         if(!Worker::isWorkerStartAppComplete())
         {
-            $GLOBALS['WORKER_START_END_RESUME_COIDS'][] = Coroutine::getuid();
-            Coroutine::suspend();
+            $e->server->getSwooleServer()->close($e->fd);
+            $e->stopPropagation();
+            return;
         }
         // 上下文创建
-        RequestContext::create();
-        RequestContext::set('fd', $e->fd);
-        RequestContext::set('server', $e->getTarget());
+        RequestContext::muiltiSet([
+            'server'    =>  $e->getTarget(),
+            'fd'        =>  $e->fd,
+        ]);
 
         // 中间件
         $dispatcher = RequestContext::getServerBean('TcpDispatcher');

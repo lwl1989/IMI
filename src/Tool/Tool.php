@@ -16,6 +16,7 @@ use Imi\Tool\Annotation\Arg;
 use Imi\Tool\Parser\ToolParser;
 use Imi\Bean\Annotation\AnnotationManager;
 use Imi\Tool\Annotation\Operation;
+use Imi\Event\Event;
 
 abstract class Tool
 {
@@ -23,18 +24,43 @@ abstract class Tool
 
     public static function initTool()
     {
-        if(!isset($_SERVER['argv'][1]))
+        $skip = false;
+        Event::trigger('IMI.INIT_TOOL', [
+            'skip'  =>  &$skip,
+        ]);
+        if(!$skip)
         {
-            throw new \RuntimeException(sprintf('Tool args error!'));
+            if(!isset($_SERVER['argv'][1]))
+            {
+                throw new \RuntimeException(sprintf('Tool args error!'));
+            }
+            if(false === strpos($_SERVER['argv'][1], '/'))
+            {
+                if(Args::get('h'))
+                {
+                    echo '命令列表:', PHP_EOL, PHP_EOL;
+                    foreach(ToolParser::getInstance()->getData()['tool'] ?? [] as $tool => $operations)
+                    {
+                        foreach($operations as $operation => $callable)
+                        {
+                            $className = get_parent_class(App::getBean($callable[0]));
+                            $refClass = new \ReflectionClass($className);
+                            echo '[', $tool, '/', $operation, '] ', static::parseComment($refClass->getMethod($callable[1])->getDocComment()), PHP_EOL;
+                        }
+                    }
+                    echo PHP_EOL, '你可以运行: ', Imi::getImiCmd('xxx', 'xxx', ['h']), ' 查看参数列表', PHP_EOL;
+                    exit;
+                }
+                else
+                {
+                    throw new \RuntimeException(sprintf('Tool name and operation not found!'));
+                }
+            }
+            // 工具名/操作名
+            list(static::$toolName, static::$toolOperation) = explode('/', $_SERVER['argv'][1]);
+            static::init();
+            Imi::setProcessName('tool');
         }
-        if(false === strpos($_SERVER['argv'][1], '/'))
-        {
-            throw new \RuntimeException(sprintf('Tool name and operation not found!'));
-        }
-        // 工具名/操作名
-        list(static::$toolName, static::$toolOperation) = explode('/', $_SERVER['argv'][1]);
-        static::init();
-        Imi::setProcessName('tool');
     }
 
     public static function run()
@@ -103,7 +129,7 @@ abstract class Tool
             {
                 $callable(...$args);
             }
-            swoole_event_wait();
+            \Swoole\Event::wait();
         }
         
     }
@@ -132,7 +158,7 @@ abstract class Tool
      * 初始化
      * @return void
      */
-    private static function init()
+    public static function init()
     {
         // 跳过初始化的工具
         foreach(Config::get('@Imi.skipInitTools') as $tool)
@@ -158,7 +184,6 @@ abstract class Tool
         }
         Annotation::getInstance()->init($initMains);
 
-        RequestContext::create();
         // 获取配置
         $pools = $caches = [];
         foreach(Helper::getMains() as $main)
@@ -178,7 +203,7 @@ abstract class Tool
         // 缓存初始化
         foreach($caches as $name => $cache)
         {
-            CacheManager::addName($name, $cache['handlerClass'], $cache['option']);
+            CacheManager::addName($name, $cache['handlerClass'], $cache['option'] ?? []);
         }
     }
 

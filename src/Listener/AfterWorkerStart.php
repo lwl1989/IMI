@@ -15,7 +15,7 @@ use Imi\Server\Event\Param\WorkerStartEventParam;
 use Imi\Server\Event\Listener\IWorkerStartEventListener;
 
 /**
- * @Listener(eventName="IMI.MAIN_SERVER.WORKER.START",priority=PHP_INT_MIN)
+ * @Listener(eventName="IMI.MAIN_SERVER.WORKER.START",priority=Imi\Util\ImiPriority::IMI_MIN)
  */
 class AfterWorkerStart implements IWorkerStartEventListener
 {
@@ -30,8 +30,7 @@ class AfterWorkerStart implements IWorkerStartEventListener
         if(!$e->server->getSwooleServer()->taskworker)
         {
             $initFlagFile = Imi::getRuntimePath(str_replace('\\', '-', App::getNamespace()) . '.app.init');
-            $checkResult = null;
-            if(0 === Worker::getWorkerID() && !($checkResult = $this->checkInitFlagFile($initFlagFile)))
+            if(0 === Worker::getWorkerID() && !$this->checkInitFlagFile($initFlagFile))
             {
                 Event::trigger('IMI.APP.INIT', [
                     
@@ -39,32 +38,7 @@ class AfterWorkerStart implements IWorkerStartEventListener
     
                 file_put_contents($initFlagFile, Swoole::getMasterPID());
     
-                $server = $e->server->getSwooleServer();
-                // 触发当前进程的PipeMessage事件
-                imigo(function() use($e){
-                    Event::trigger('IMI.MAIN_SERVER.PIPE_MESSAGE', [
-                        'server'    => $e->server,
-                        'workerID'  => $e->workerID,
-                        'message'   => 'app.inited',
-                    ], $this, PipeMessageEventParam::class);
-                });
-                // 通知其它worker进程
-                for($i = 1; $i < $server->setting['worker_num']; ++$i)
-                {
-                    $server->sendMessage('app.inited', $i);
-                }
                 echo 'App Inited', PHP_EOL;
-            }
-            else if($checkResult || (null === $checkResult && $this->checkInitFlagFile($initFlagFile)))
-            {
-                // 热重启后，触发当前进程的PipeMessage事件
-                imigo(function() use($e){
-                    Event::trigger('IMI.MAIN_SERVER.PIPE_MESSAGE', [
-                        'server'    => $e->server,
-                        'workerID'  => 0,
-                        'message'   => 'app.inited',
-                    ], $this, PipeMessageEventParam::class);
-                });
             }
         }
         // worker 初始化

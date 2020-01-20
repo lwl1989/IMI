@@ -43,7 +43,7 @@ class ValidatorHelper
         {
             return preg_match('/^-?\d+\.\d{1,' . ((int)$accuracy) . '}$/', $value) > 0;
         }
-        return true;
+        return is_numeric($value) && false !== strpos($value, '.');
     }
 
     /**
@@ -96,7 +96,7 @@ class ValidatorHelper
         {
             return preg_match('/^-?\d+(\.\d{1,' . ((int)$accuracy) . '})?$/', $value) > 0;
         }
-        return true;
+        return is_numeric($value);
     }
 
     /**
@@ -151,8 +151,7 @@ class ValidatorHelper
     
     /**
      * 检测邮箱格式
-     * @access public static
-     * @param $email
+     * @param string $email
      * @return bool
      */
     public static function email($email)
@@ -162,7 +161,6 @@ class ValidatorHelper
     
     /**
      * 检测中国手机号码格式
-     * @access public static
      * @param string $str
      * @return bool
      */
@@ -173,7 +171,6 @@ class ValidatorHelper
     
     /**
      * 检测中国电话号码格式，支持400、800等
-     * @access public static
      * @param string $str
      * @return bool
      */
@@ -181,7 +178,21 @@ class ValidatorHelper
     {
         return preg_match('/^(((\d{3,4}-)?(\d{7,8}){1}(-\d{2,4})?)|((\d{3,4}-)?(\d{3,4}){1}(-\d{3,4})))$/', $str) > 0;
     }
+<<<<<<< HEAD
     
+=======
+
+    /**
+     * 检测中国手机电话号码格式
+     * @param string $str
+     * @return bool
+     */
+    public static function mobile($str)
+    {
+        return preg_match('/^(1(([35789][0-9])|(47)))\d{8}$/', $str) > 0;
+    }
+
+>>>>>>> upstream/dev
     /**
      * 检测是否符合中国固话或手机格式，支持400、800等
      * @param string $str            
@@ -194,18 +205,16 @@ class ValidatorHelper
     
     /**
      * 检测中国邮政编码
-     * @access public static
      * @param string $str
      * @return bool
      */
     public static function postcode($str)
     {
-        return preg_match('/\d{6}/', $str) > 0;
+        return preg_match('/^\d{6}$/', $str) > 0;
     }
     
     /**
      * 检测URL地址
-     * @access public static
      * @param string $str
      * @return bool
      */
@@ -216,7 +225,6 @@ class ValidatorHelper
     
     /**
      * 检测QQ号是否符合规则
-     * @access public static
      * @param string $str
      * @return bool
      */
@@ -396,7 +404,10 @@ class ValidatorHelper
         {
             throw new \InvalidArgumentException(sprintf('Unsupport operation %s', $operation));
         }
+<<<<<<< HEAD
         return eval('return $valueLeft ' . $operation . ' $valueRight;');
+=======
+>>>>>>> upstream/dev
     }
     
     /**
@@ -430,8 +441,29 @@ class ValidatorHelper
     }
     
     /**
+     * 值在枚举值范围内
+     * @param float $value
+     * @param string $enumClass
+     * @return boolean
+     */
+    public static function inEnum($value, $enumClass)
+    {
+        return in_array($value, $enumClass::getValues());
+    }
+
+    /**
+     * 值不在枚举值范围内
+     * @param float $value
+     * @param string $enumClass
+     * @return boolean
+     */
+    public static function notInEnum($value, $enumClass)
+    {
+        return !in_array($value, $enumClass::getValues());
+    }
+
+    /**
      * 检测中国居民身份证，支持15位和18位
-     * @access public static
      * @param string $id_card
      * @return bool
      */
@@ -477,14 +509,7 @@ class ValidatorHelper
             }
             $id_card1 = $id_card;
             $id_card = substr($id_card, 0, 17);
-            if ($idcard_verify_number() !== strtoupper(substr($id_card1, 17, 1)))
-            {
-                return false;
-            }
-            else
-            {
-                return true;
-            }
+            return $idcard_verify_number() === strtoupper(substr($id_card1, 17, 1));
         };
         /**
          * 将15位身份证升级到18位

@@ -1,7 +1,6 @@
 <?php
 namespace Imi\Event;
 
-use Imi\Util\KVStorage;
 use Imi\Bean\Parser\ClassEventParser;
 use Imi\Bean\BeanFactory;
 
@@ -9,7 +8,7 @@ trait TEvent
 {
     /**
      * 事件数据映射原始数据
-     * @var KVStorage[]
+     * @var \Imi\Event\EventItem[][]
      */
     private $events = [];
 
@@ -28,60 +27,66 @@ trait TEvent
 
     /**
      * 事件监听
-     * @param string $name 事件名称
+     * @param string|string[] $name 事件名称
      * @param mixed $callback 回调，支持回调函数、基于IEventListener的类名
      * @param int $priority 优先级，越大越先执行
      * @return void
      */
     public function on($name, $callback, $priority = 0)
     {
-        if(!isset($this->events[$name]))
+        foreach((array)$name as $eventName)
         {
-            $this->events[$name] = new KVStorage;
+            $this->events[$eventName][] = new EventItem($callback, $priority);
+            $this->eventChangeRecords[$eventName] = true;
         }
-        // 数据映射
-        $this->events[$name]->attach($callback, [
-            'callback' => $callback,
-            'priority' => $priority,
-        ]);
-        $this->eventChangeRecords[$name] = true;
     }
 
     /**
      * 监听事件，仅触发一次
-     * @param string $name 事件名称
+     * @param string|string[] $name 事件名称
      * @param mixed $callback 回调，支持回调函数、基于IEventListener的类名
      * @param int $priority 优先级，越大越先执行
      * @return void
      */
     public function one($name, $callback, $priority = 0)
     {
-        if(!isset($this->events[$name]))
+        foreach((array)$name as $eventName)
         {
-            $this->events[$name] = new KVStorage;
+            $this->events[$eventName][] = new EventItem($callback, $priority, true);
+            $this->eventChangeRecords[$eventName] = true;
         }
-        // 数据映射
-        $this->events[$name]->attach($callback, [
-            'callback'  => $callback,
-            'priority'  => $priority,
-            'one'       => true,
-        ]);
-        $this->eventChangeRecords[$name] = true;
     }
 
     /**
      * 取消事件监听
-     * @param string $name 事件名称
-     * @param mixed $callback 回调，支持回调函数、基于IEventListener的类名
+     * @param string|string[] $name 事件名称
+     * @param mixed|null $callback 回调，支持回调函数、基于IEventListener的类名。为 null 则不限制
      * @return void
      */
-    public function off($name, $callback)
+    public function off($name, $callback = null)
     {
-        if(isset($this->events[$name]))
+        foreach((array)$name as $eventName)
         {
-            // 数据映射
-            $this->events[$name]->detach($callback);
-            $this->eventChangeRecords[$name] = true;
+            if(isset($this->events[$eventName]))
+            {
+                if($callback)
+                {
+                    $map = &$this->events[$eventName];
+                    // 数据映射
+                    foreach($this->events[$eventName] as $k => $item)
+                    {
+                        if($callback === $item->callback)
+                        {
+                            unset($map[$k]);
+                        }
+                    }
+                }
+                else
+                {
+                    unset($this->events[$eventName]);
+                }
+                $this->eventChangeRecords[$eventName] = true;
+            }
         }
     }
 
@@ -95,18 +100,44 @@ trait TEvent
      */
     public function trigger($name, $data = [], $target = null, $paramClass = EventParam::class)
     {
-        // ClassEventListener支持
-        $callbacks = $this->getTriggerCallbacks($name);
+        // 获取回调列表
+        if(!isset($this->eventQueue[$name]))
+        {
+            $classEventdata = ClassEventParser::getInstance()->getData();
+            if(empty($classEventdata) && empty($this->events[$name]))
+            {
+                return;
+            }
+            $eventsMap = &$this->events[$name];
+            $this->rebuildEventQueue($name);
+            foreach($classEventdata as $className => $option)
+            {
+                if(isset($option[$name]) && $this instanceof $className)
+                {
+                    foreach($option[$name] as $callback)
+                    {
+                        // 数据映射
+                        $eventsMap[] = $item = new EventItem($callback['className'], $callback['priority']);
+                        $this->eventQueue[$name]->insert($item, $callback['priority']);
+                    }
+                }
+            }
+        }
+        else if(empty($this->events[$name]))
+        {
+            return;
+        }
+        else if(isset($this->eventChangeRecords[$name]))
+        {
+            $this->rebuildEventQueue($name);
+        }
+        $callbacks = clone $this->eventQueue[$name];
         // 实例化参数
         $param = new $paramClass($name, $data, $target);
-        $hasOne = false;
-        foreach($callbacks as $callback)
+        $oneTimeCallbacks = [];
+        foreach($callbacks as $option)
         {
-            // 事件配置
-            if(isset($this->events[$name]))
-            {
-                $option = $this->events[$name]->offsetGet($callback);
-            }
+            $callback = $option->callback;
             // 回调类型处理，优先判断为类的情况
             $type = 'callback';
             if(is_string($callback) && class_exists($callback))
@@ -125,10 +156,9 @@ trait TEvent
                     break;
             }
             // 仅触发一次
-            if(isset($option['one']) && $option['one'])
+            if($option->oneTime)
             {
-                $this->events[$name]->detach($callback);
-                $hasOne = true;
+                $oneTimeCallbacks[] = $option;
             }
             // 阻止事件传播
             if($param->isPropagationStopped())
@@ -137,50 +167,22 @@ trait TEvent
             }
         }
         // 仅触发一次的处理
-        if($hasOne)
+        if(isset($oneTimeCallbacks[0]))
         {
-            $this->eventChangeRecords[$name] = true;
-        }
-    }
-
-    /**
-     * 获取事件触发回调列表
-     *
-     * @param string $name
-     * @return array
-     */
-    private function getTriggerCallbacks($name)
-    {
-        if(!isset($this->events[$name]))
-        {
-            $this->events[$name] = new KVStorage;
-        }
-        if(!isset($this->eventQueue[$name]))
-        {
-            $this->rebuildEventQueue($name);
-            $data = ClassEventParser::getInstance()->getData();
-            foreach($data as $className => $option)
+            $eventsMap = &$this->events[$name];
+            foreach($eventsMap as $eventsKey => $item)
             {
-                if($this instanceof $className && isset($option[$name]))
+                foreach($oneTimeCallbacks as $oneTimeCallbacksKey => $oneTimeItem)
                 {
-                    foreach($option[$name] as $callback)
+                    if($oneTimeItem === $item)
                     {
-                        // 数据映射
-                        $this->events[$name]->attach($callback['className'], [
-                            'callback' => $callback['className'],
-                            'priority' => $callback['priority'],
-                        ]);
-                        $this->eventQueue[$name]->insert($callback['className'], $callback['priority']);
+                        unset($eventsMap[$eventsKey], $oneTimeCallbacks[$oneTimeCallbacksKey]);
+                        break;
                     }
                 }
             }
+            $this->eventChangeRecords[$name] = true;
         }
-        else if(isset($this->eventChangeRecords[$name]))
-        {
-            $this->rebuildEventQueue($name);
-        }
-        $callbacks = clone $this->eventQueue[$name];
-        return $callbacks;
     }
 
     /**
@@ -190,10 +192,9 @@ trait TEvent
     private function rebuildEventQueue($name)
     {
         $this->eventQueue[$name] = new \SplPriorityQueue;
-        foreach($this->events[$name] as $object)
+        foreach($this->events[$name] ?? [] as $item)
         {
-            $event = $this->events[$name][$object];
-            $this->eventQueue[$name]->insert($event['callback'], $event['priority']);
+            $this->eventQueue[$name]->insert($item, $item->priority);
         }
         $this->eventChangeRecords[$name] = null;
     }

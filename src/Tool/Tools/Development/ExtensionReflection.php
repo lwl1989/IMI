@@ -75,12 +75,13 @@ CODE;
             {
                 // 方法参数定义
                 $args[] = $this->getMethodParamDefine($param);
-                $comments[] = '@var ' . ($param->getType() ?? 'mixed') . ' $' . $param->name;
+                $type = $param->getType();
+                $comments[] = '@var ' . ($type ? $type->getName() : 'mixed') . ' $' . $param->name;
             }
             $return = $function->getReturnType();
             if(null !== $return)
             {
-                $comments[] = '@return ' . $return;
+                $comments[] = '@return ' . $return->getName();
             }
             $args = implode(', ', $args);
             if([] === $comments)
@@ -140,6 +141,10 @@ CODE;
         $result = '';
         // 类型
         $paramType = $param->getType();
+        if($paramType)
+        {
+            $paramType = $paramType->getName();
+        }
         if(null !== $paramType && $param->allowsNull())
         {
             $paramType = '?' . $paramType;
@@ -211,12 +216,13 @@ CODE;
             {
                 // 方法参数定义
                 $args[] = $this->getMethodParamDefine($param);
-                $comments[] = '@var ' . ($param->getType() ?? 'mixed') . ' $' . $param->name;
+                $type = $param->getType();
+                $comments[] = '@var ' . ($type ? $type->getName() : 'mixed') . ' $' . $param->name;
             }
             $return = $method->getReturnType();
             if(null !== $return)
             {
-                $comments[] = '@return ' . $return;
+                $comments[] = '@return ' . $return->getName();
             }
             $args = implode(', ', $args);
             if([] === $comments)

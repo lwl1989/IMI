@@ -89,7 +89,7 @@ abstract class PoolManager
     {
         $resource = static::getInstance($name)->getResource();
 
-        if(RequestContext::exists() && $resource)
+        if($resource)
         {
             static::pushResourceToRequestContext($resource);
         }
@@ -143,10 +143,7 @@ abstract class PoolManager
     public static function releaseResource(IPoolResource $resource)
     {
         $resource->getPool()->release($resource);
-        if(RequestContext::exists())
-        {
-            static::removeResourceFromRequestContext($resource);
-        }
+        static::removeResourceFromRequestContext($resource);
     }
 
     /**
@@ -232,4 +229,39 @@ abstract class PoolManager
             RequestContext::set($name, null);
         }
     }
+
+    /**
+     * 清理连接池，只允许留下指定连接池
+     *
+     * @param string[] $allowList
+     * @return void
+     */
+    public static function cleanAllow(array $allowList)
+    {
+        foreach(self::getNames() as $poolName)
+        {
+            if(!in_array($poolName, $allowList))
+            {
+                self::getInstance($poolName)->close();
+            }
+        }
+    }
+
+    /**
+     * 清理连接池，只允许留下指定连接池
+     *
+     * @param string[] $denyList
+     * @return void
+     */
+    public static function cleanDeny(array $denyList)
+    {
+        foreach(self::getNames() as $poolName)
+        {
+            if(in_array($poolName, $denyList))
+            {
+                self::getInstance($poolName)->close();
+            }
+        }
+    }
+
 }

@@ -10,6 +10,7 @@ use Imi\Util\Imi;
 use Imi\Util\ClassObject;
 use Imi\Bean\Annotation\AnnotationManager;
 use Imi\Bean\IBean;
+use Imi\Server\Route\RouteCallable;
 
 /**
  * 视图注解处理器
@@ -18,6 +19,13 @@ class ViewParser extends BaseParser
 {
     use TServerAnnotationParser;
     
+    /**
+     * 视图注解缓存
+     *
+     * @var \Imi\Server\View\Annotation\View[]
+     */
+    private $viewCache = [];
+
     /**
      * 处理方法
      * @param \Imi\Bean\Annotation\Base $annotation 注解类
@@ -38,9 +46,14 @@ class ViewParser extends BaseParser
      */
     public function getByCallable($callable)
     {
+        if($callable instanceof RouteCallable)
+        {
+            $callable = $callable->getCallable();
+        }
         if(!is_array($callable))
         {
-            return null;
+            $view = new View();
+            return $view;
         }
         list($object, $methodName) = $callable;
         if($object instanceof IBean)
@@ -51,34 +64,47 @@ class ViewParser extends BaseParser
         {
             $className = get_class($object);
         }
-        $shortClassName = Imi::getClassShortName($className);
-        
-        $isClassView = false;
-        $view = AnnotationManager::getMethodAnnotations($className, $methodName, View::class)[0] ?? null;
-        if(null === $view)
+        if(!isset($this->viewCache[$className][$methodName]))
         {
-            $view = AnnotationManager::getClassAnnotations($className, View::class)[0] ?? null;
+            $shortClassName = Imi::getClassShortName($className);
+            $isClassView = false;
+            $view = AnnotationManager::getMethodAnnotations($className, $methodName, View::class)[0] ?? null;
             if(null === $view)
             {
-                $view = new View([
-                    'template' => File::path($shortClassName, $methodName),
-                ]);
+                $view = AnnotationManager::getClassAnnotations($className, View::class)[0] ?? null;
+                if(null === $view)
+                {
+                    $view = new View([
+                        'template' => File::path($shortClassName, $methodName),
+                    ]);
+                }
+                else
+                {
+                    $view = clone $view;
+                    $isClassView = true;
+                }
             }
             else
             {
-                $isClassView = true;
+                $view = clone $view;
             }
-        }
 
-        // baseDir
-        if(null === $view->baseDir && !$isClassView)
-        {
-            $classView = AnnotationManager::getClassAnnotations($className, View::class)[0] ?? null;
-            if($classView)
+            // baseDir
+            if(null === $view->baseDir && !$isClassView)
             {
-                $view->baseDir = $classView->baseDir;
+                $classView = AnnotationManager::getClassAnnotations($className, View::class)[0] ?? null;
+                if($classView)
+                {
+                    $view->baseDir = $classView->baseDir;
+                }
             }
+            // template
+            if(null === $view->template)
+            {
+                $view->template = $methodName;
+            }
+            $this->viewCache[$className][$methodName] = $view;
         }
-        return $view;
+        return $this->viewCache[$className][$methodName];
     }
 }

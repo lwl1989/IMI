@@ -2,6 +2,7 @@
 namespace Imi\Model;
 
 use Imi\Pool\PoolManager;
+use Imi\Redis\RedisManager;
 use Imi\Util\MemoryTableManager;
 
 /**
@@ -36,6 +37,10 @@ abstract class RedisModel extends BaseModel
     {
         $key = static::generateKey($condition);
         $data = static::__getRedis()->get($key);
+        if(!$data)
+        {
+            return null;
+        }
         return static::newInstance($data);
     }
 
@@ -64,34 +69,34 @@ abstract class RedisModel extends BaseModel
 
     /**
      * 保存记录
-     * @return void
+     * @return bool
      */
     public function save()
     {
         $redis = static::__getRedis($this);
         if(null === $this->__ttl)
         {
-            $redis->set($this->__getKey(), $this->toArray());
+            return $redis->set($this->__getKey(), $this->toArray());
         }
         else
         {
-            $redis->set($this->__getKey(), $this->toArray(), $this->__ttl);
+            return $redis->set($this->__getKey(), $this->toArray(), $this->__ttl);
         }
     }
     
     /**
      * 删除记录
-     * @return void
+     * @return bool
      */
     public function delete()
     {
-        static::__getRedis($this)->del($this->__getKey());
+        return static::__getRedis($this)->del($this->__getKey()) > 0;
     }
 
     /**
      * 批量删除
      * @param string ...$conditions
-     * @return void
+     * @return int
      */
     public static function deleteBatch(...$conditions)
     {
@@ -100,7 +105,7 @@ abstract class RedisModel extends BaseModel
         {
             $keys[] = static::generateKey($condition);
         }
-        static::__getRedis()->del(...$keys);
+        return static::__getRedis()->del(...$keys);
     }
 
     /**
@@ -110,16 +115,16 @@ abstract class RedisModel extends BaseModel
     public function __getKey()
     {
         $rule = ModelManager::getKeyRule($this);
-        $result = $rule->rule;
+        $replaces = [];
         foreach($rule->paramNames as $paramName)
         {
             if(!isset($this[$paramName]))
             {
                 throw new \RuntimeException(sprintf('__getKey param %s does not exists', $paramName));
             }
-            $result = str_replace('{' . $paramName . '}', $this[$paramName], $result);
+            $replaces['{' . $paramName . '}'] = $this[$paramName];
         }
-        return $result;
+        return strtr($rule->rule, $replaces);
     }
 
     /**
@@ -136,28 +141,28 @@ abstract class RedisModel extends BaseModel
         else
         {
             $rule = ModelManager::getKeyRule(static::class);
-            $result = $rule->rule;
+            $replaces = [];
             foreach($rule->paramNames as $paramName)
             {
                 if(!isset($condition[$paramName]))
                 {
                     throw new \RuntimeException(sprintf('GenerateKey param %s does not exists', $paramName));
                 }
-                $result = str_replace('{' . $paramName . '}', $condition[$paramName], $result);
+                $replaces['{' . $paramName . '}'] = $condition[$paramName];
             }
-            return $result;
+            return strtr($rule->rule, $replaces);
         }
     }
 
     /**
      * 获取Redis操作对象
      * @param RedisModel $redisModel
-     * @return \Redis
+     * @return \Imi\Redis\RedisHandler
      */
     public static function __getRedis(RedisModel $redisModel = null)
     {
         $annotation = ModelManager::getRedisEntity(null === $redisModel ? static::class : $redisModel);
-        $redis = PoolManager::getRequestContextResource($annotation->poolName)->getInstance();
+        $redis = RedisManager::getInstance($annotation->poolName);
         if(null !== $annotation->db)
         {
             $redis->select($annotation->db);

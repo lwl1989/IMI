@@ -11,7 +11,7 @@ use Imi\Event\IEventListener;
 use Imi\Bean\Annotation\Listener;
 
 /**
- * @Listener(eventName="IMI.INITED",priority=1023)
+ * @Listener(eventName="IMI.INITED",priority=19940300)
  */
 class Init implements IEventListener
 {
@@ -28,6 +28,7 @@ class Init implements IEventListener
             {
                 $result = exec(Imi::getImiCmd('imi', 'buildRuntime', [
                     'format'    =>  'json',
+                    'imi-runtime'       =>  Imi::getRuntimePath('imi-runtime-bak.cache'),
                 ]), $output);
                 $result = json_decode($result);
                 if('Build app runtime complete' === trim($result))

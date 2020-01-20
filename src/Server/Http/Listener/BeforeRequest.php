@@ -2,16 +2,13 @@
 namespace Imi\Server\Http\Listener;
 
 use Imi\RequestContext;
-use Imi\Bean\Annotation\ClassEventListener;
 use Imi\Server\Event\Param\RequestEventParam;
 use Imi\Server\Event\Listener\IRequestEventListener;
 use Imi\App;
-use Imi\Worker;
-use Imi\Util\Coroutine;
+use Imi\ConnectContext;
 
 /**
  * request事件前置处理
- * @ClassEventListener(className="Imi\Server\Http\Server",eventName="request",priority=PHP_INT_MAX)
  */
 class BeforeRequest implements IRequestEventListener
 {
@@ -22,20 +19,30 @@ class BeforeRequest implements IRequestEventListener
      */
     public function handle(RequestEventParam $e)
     {
-        if(!Worker::isWorkerStartAppComplete())
-        {
-            $GLOBALS['WORKER_START_END_RESUME_COIDS'][] = Coroutine::getuid();
-            Coroutine::suspend();
+        try {
+            // 上下文创建
+            RequestContext::muiltiSet([
+                'server'    =>  $server = $e->request->getServerInstance(),
+                'request'   =>  $e->request,
+                'response'  =>  $e->response,
+            ]);
+            if($server->isHttp2())
+            {
+                RequestContext::set('fd', $e->request->getSwooleRequest()->fd);
+                ConnectContext::create();
+            }
+            // 中间件
+            $dispatcher = $server->getBean('HttpDispatcher');
+            $dispatcher->dispatch($e->request, $e->response);
+        } catch(\Throwable $th) {
+            if(!$server)
+            {
+                throw $th;
+            }
+            if(true !== $server->getBean('HttpErrorHandler')->handle($th))
+            {
+                throw $th;
+            }
         }
-        
-        // 上下文创建
-        RequestContext::create();
-        RequestContext::set('server', $e->request->getServerInstance());
-        RequestContext::set('request', $e->request);
-        RequestContext::set('response', $e->response);
-
-        // 中间件
-        $dispatcher = RequestContext::getServerBean('HttpDispatcher');
-        $dispatcher->dispatch($e->request, $e->response);
     }
 }

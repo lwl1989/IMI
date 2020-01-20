@@ -7,14 +7,39 @@ namespace Imi\Util;
 abstract class ArrayUtil
 {
     /**
-     * 从数组中移除一个或多个元素
+     * 从数组中移除一个或多个元素，重新组织为连续的键
      * @param array $array
      * @param mixed $value
      * @return array
      */
     public static function remove($array, ...$value)
     {
-        return array_diff($array, $value);
+        foreach($value as $item)
+        {
+            while(false !== ($index = array_search($item, $array)))
+            {
+                unset($array[$index]);
+            }
+        }
+        return array_values($array);
+    }
+
+    /**
+     * 从数组中移除一个或多个元素，保持原有键
+     * @param array $array
+     * @param mixed $value
+     * @return array
+     */
+    public static function removeKeepKey($array, ...$value)
+    {
+        foreach($value as $item)
+        {
+            while(false !== ($index = array_search($item, $array)))
+            {
+                unset($array[$index]);
+            }
+        }
+        return $array;
     }
 
     /**
@@ -31,9 +56,10 @@ abstract class ArrayUtil
             {
                 continue;
             }
+            $isAssoc = self::isAssoc($array);
             foreach ( $array as $key => $value )
             {
-                if (is_string ( $key ))
+                if ($isAssoc)
                 {
                     if (is_array ( $value ) && isset($merged[$key]) && is_array ( $merged [$key] ))
                     {
@@ -103,6 +129,39 @@ abstract class ArrayUtil
                 break;
             }
             $result[$key] = $array[$key];
+        }
+        return $result;
+    }
+
+    /**
+     * 列表转树形关联结构
+     *
+     * @param array $list
+     * @param string $idField
+     * @param string $parentField
+     * @param string $childrenField
+     * @return array
+     */
+    public static function toTreeAssoc(array $list, $idField = 'id', $parentField = 'parent_id', $childrenField = 'children')
+    {
+        // 查出所有记录
+        $result = $tmpArr = [];
+        // 处理成ID为键名的数组
+        foreach($list as $item)
+        {
+            $item[$childrenField] = [];
+            $tmpArr[$item[$idField]] = $item;
+        }
+        foreach($tmpArr as $item)
+        {
+            if(isset($tmpArr[$item[$parentField]]))
+            {
+                $tmpArr[$item[$parentField]][$childrenField][] = &$tmpArr[$item[$idField]];
+            }
+            else
+            {
+                $result[] = &$tmpArr[$item[$idField]];
+            }
         }
         return $result;
     }

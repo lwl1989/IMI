@@ -8,7 +8,7 @@ use Imi\Server\UdpServer\IPacketHandler;
 use Imi\Server\UdpServer\Message\IPacketData;
 
 /**
- * @Bean
+ * @Bean("UDPActionMiddleware")
  */
 class ActionMiddleware implements IMiddleware
 {
@@ -22,22 +22,26 @@ class ActionMiddleware implements IMiddleware
     public function process(IPacketData $data, IPacketHandler $handler)
     {
         // 获取路由结果
+        /** @var \Imi\Server\UdpServer\Route\RouteResult $result */
         $result = RequestContext::get('routeResult');
         if(null === $result)
         {
             return $handler->handle($data);
         }
         // 路由匹配结果是否是[控制器对象, 方法名]
-        $isObject = is_array($result['callable']) && isset($result['callable'][0]) && $result['callable'][0] instanceof UdpController;
+        $isObject = is_array($result->callable) && isset($result->callable[0]) && $result->callable[0] instanceof UdpController;
         if($isObject)
         {
-            // 复制一份控制器对象
-            $result['callable'][0] = clone $result['callable'][0];
-            $result['callable'][0]->server = RequestContext::getServer();
-            $result['callable'][0]->data = $data;
+            if(!$result->routeItem->singleton)
+            {
+                // 复制一份控制器对象
+                $result->callable[0] = clone $result->callable[0];
+            }
+            $result->callable[0]->server = RequestContext::getServer();
+            $result->callable[0]->data = $data;
         }
         // 执行动作
-        $actionResult = ($result['callable'])($data->getFormatData());
+        $actionResult = ($result->callable)($data->getFormatData());
 
         RequestContext::set('udpResult', $actionResult);
 

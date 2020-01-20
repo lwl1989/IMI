@@ -35,33 +35,43 @@ class Html implements IHandler
      */
     protected $templateEngine = \Imi\Server\View\Engine\Php::class;
 
-    public function handle(View $viewAnnotation, Response $response): Response
+    /**
+     * 模版引擎处理对象
+     *
+     * @var \Imi\Server\View\Engine\IEngine
+     */
+    protected $templateEngineInstance;
+
+    public function __init()
     {
-        $fileName = $this->getTemplateFilePath($viewAnnotation);
+        $this->templateEngineInstance = RequestContext::getServerBean($this->templateEngine);
+    }
+
+    public function handle($data, array $options, Response $response): Response
+    {
+        $fileName = $this->getTemplateFilePath($options);
 
         if(!is_file($fileName))
         {
             return $response;
         }
 
-        $engine = RequestContext::getServerBean($this->templateEngine);
-
-        return $engine->render($response, $fileName, $viewAnnotation->data);
+        return $this->templateEngineInstance->render($response, $fileName, $data);
     }
 
     /**
      * 获取模版文件真实路径，失败返回false
-     * @param \Imi\Server\View\Annotation\View $viewAnnotation
+     * @param array $options
      * @return string|boolean
      */
-    protected function getTemplateFilePath($viewAnnotation)
+    protected function getTemplateFilePath(array $options)
     {
-        $fileName = realpath($viewAnnotation->template);
+        $fileName = realpath($options['template']);
         if(is_file($fileName))
         {
             return $fileName;
         }
-        $fileName = File::path($this->templatePath, $viewAnnotation->baseDir ?? '', $viewAnnotation->template);
+        $fileName = File::path($this->templatePath, $options['baseDir'] ?? '', $options['template']);
         foreach($this->fileSuffixs as $suffix)
         {
             $tryFileName = $fileName . '.' . $suffix;

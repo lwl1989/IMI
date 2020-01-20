@@ -3,25 +3,18 @@ namespace Imi\Db\Drivers\PdoMysql;
 
 use Imi\Db\Drivers\Base;
 use Imi\Bean\BeanFactory;
+use Imi\Config;
 use Imi\Db\Interfaces\IDb;
-use Imi\Db\Traits\SqlParser;
 use Imi\Db\Exception\DbException;
 use Imi\Db\Interfaces\IStatement;
-use Imi\Db\Transaction\TTransaction;
 use Imi\Db\Statement\StatementManager;
+use Imi\Db\Transaction\Transaction;
 
 /**
  * PDO MySQL驱动
  */
 class Driver extends Base implements IDb
 {
-    use SqlParser;
-    use TTransaction {
-        beginTransaction as protected __tBeginTransaction;
-        commit as protected __tCommit;
-        rollBack as protected __tRollBack;
-    }
-
     /**
      * 连接对象
      * @var \PDO
@@ -45,6 +38,20 @@ class Driver extends Base implements IDb
      * @var Statement
      */
     protected $lastStmt;
+
+    /**
+     * 是否缓存 Statement
+     *
+     * @var bool
+     */
+    protected $isCacheStatement;
+
+    /**
+     * 事务管理
+     *
+     * @var \Imi\Db\Transaction\Transaction
+     */
+    protected $transaction;
 
     /**
      * 参数格式：
@@ -75,6 +82,13 @@ class Driver extends Base implements IDb
         {
             $this->option['options'] = [];
         }
+        $this->isCacheStatement = Config::get('@app.db.statement.cache', true);
+        $this->transaction = new Transaction;
+    }
+
+    public function __destruct()
+    {
+        $this->close();
     }
 
     /**
@@ -125,6 +139,7 @@ class Driver extends Base implements IDb
      */
     public function close()
     {
+        StatementManager::clear($this);
         if(null !== $this->lastStmt)
         {
             $this->lastStmt = null;
@@ -156,7 +171,7 @@ class Driver extends Base implements IDb
             }
         }
         $this->exec('SAVEPOINT P' . $this->getTransactionLevels());
-        $this->__tBeginTransaction();
+        $this->transaction->beginTransaction();
         return true;
     }
 
@@ -166,7 +181,7 @@ class Driver extends Base implements IDb
      */
     public function commit(): bool
     {
-        return $this->__tCommit() && $this->instance->commit();
+        return $this->instance->commit() && $this->transaction->commit();
     }
 
     /**
@@ -177,16 +192,30 @@ class Driver extends Base implements IDb
      */
     public function rollBack($levels = null): bool
     {
-        $this->__tRollBack($levels);
         if(null === $levels)
         {
-            return $this->instance->rollback();
+            $result = $this->instance->rollback();
         }
         else
         {
             $this->exec('ROLLBACK TO P' . ($this->getTransactionLevels()));
-            return true;
+            $result = true;
         }
+        if($result)
+        {
+            $this->transaction->rollBack($levels);
+        }
+        return $result;
+    }
+
+    /**
+     * 获取事务层数
+     *
+     * @return int
+     */
+    public function getTransactionLevels(): int
+    {
+        return $this->transaction->getTransactionLevels();
     }
 
     /**
@@ -227,7 +256,7 @@ class Driver extends Base implements IDb
         else
         {
             $errorInfo = $this->instance->errorInfo();
-            return !isset($errorInfo[0]) || 0 == $errorInfo[0] ? '' : implode(' ', $errorInfo);
+            return $errorInfo[1] . ':' . $errorInfo[2];
         }
     }
 
@@ -247,6 +276,7 @@ class Driver extends Base implements IDb
      */
     public function exec(string $sql): int
     {
+        $this->lastSql = $sql;
         return $this->instance->exec($sql);
     }
 
@@ -299,39 +329,22 @@ class Driver extends Base implements IDb
      */
     public function prepare(string $sql, array $driverOptions = [])
     {
-        if(isset($driverOptions['IMI_NO_CACHE']))
-        {
-            $isCache = $driverOptions['IMI_NO_CACHE'];
-        }
-        else
-        {
-            $isCache = !isset($this->option['IMI_NO_CACHE']) || $this->option['IMI_NO_CACHE'];
-        }
-        if($isCache && $stmtCache = StatementManager::get($this, $sql))
+        if($this->isCacheStatement && $stmtCache = StatementManager::get($this, $sql))
         {
             $stmt = $stmtCache['statement'];
         }
         else
         {
-            // 处理支持 :xxx 参数格式
             $this->lastSql = $sql;
             $this->lastStmt = $this->instance->prepare($sql, $driverOptions);
             if(false === $this->lastStmt)
             {
-                throw new DbException('sql prepare error: [' . $this->errorCode() . '] ' . $this->errorInfo() . PHP_EOL . 'sql: ' . $sql . PHP_EOL);
+                throw new DbException('SQL prepare error [' . $this->errorCode() . '] ' . $this->errorInfo() . PHP_EOL . 'sql: ' . $sql . PHP_EOL);
             }
             $stmt = BeanFactory::newInstance(Statement::class, $this, $this->lastStmt);
-            if($isCache)
+            if($this->isCacheStatement && null === $stmtCache)
             {
-                $stmtCache = StatementManager::get($this, $sql);
-                if($stmtCache)
-                {
-                    StatementManager::unUsingStatement($stmtCache['statement']);
-                }
-                else
-                {
-                    StatementManager::set($stmt, true);
-                }
+                StatementManager::setNX($stmt, true);
             }
         }
 
@@ -350,8 +363,19 @@ class Driver extends Base implements IDb
         $this->lastStmt = $this->instance->query($sql);
         if(false === $this->lastStmt)
         {
-            throw new DbException('sql prepare error: [' . $this->errorCode() . '] ' . $this->errorInfo() . PHP_EOL . 'sql: ' . $sql . PHP_EOL);
+            throw new DbException('SQL prepare error: [' . $this->errorCode() . '] ' . $this->errorInfo() . PHP_EOL . 'sql: ' . $sql . PHP_EOL);
         }
         return BeanFactory::newInstance(Statement::class, $this, $this->lastStmt);
     }
+
+    /**
+     * Get 事务管理
+     *
+     * @return \Imi\Db\Transaction\Transaction
+     */ 
+    public function getTransaction()
+    {
+        return $this->transaction;
+    }
+
 }

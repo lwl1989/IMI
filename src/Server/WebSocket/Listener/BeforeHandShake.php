@@ -5,13 +5,15 @@ use Imi\Worker;
 use Imi\ConnectContext;
 use Imi\RequestContext;
 use Imi\Util\Coroutine;
+use Imi\Util\Http\Consts\StatusCode;
+use Imi\Server\Event\Param\OpenEventParam;
 use Imi\Bean\Annotation\ClassEventListener;
 use Imi\Server\Event\Param\HandShakeEventParam;
 use Imi\Server\Event\Listener\IHandShakeEventListener;
 
 /**
  * HandShake事件前置处理
- * @ClassEventListener(className="Imi\Server\WebSocket\Server",eventName="handShake",priority=PHP_INT_MAX)
+ * @ClassEventListener(className="Imi\Server\WebSocket\Server",eventName="handShake",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class BeforeHandShake implements IHandShakeEventListener
 {
@@ -24,30 +26,24 @@ class BeforeHandShake implements IHandShakeEventListener
     {
         if(!Worker::isWorkerStartAppComplete())
         {
-            $GLOBALS['WORKER_START_END_RESUME_COIDS'][] = Coroutine::getuid();
-            Coroutine::suspend();
+            $e->response->withStatus(StatusCode::SERVICE_UNAVAILABLE)->send();
+            $e->stopPropagation();
+            return;
         }
         // 上下文创建
-        RequestContext::create();
-        RequestContext::set('server', $e->request->getServerInstance());
-        RequestContext::set('request', $e->request);
-        RequestContext::set('response', $e->response);
-        RequestContext::set('fd', $e->request->getSwooleRequest()->fd);
-
-        // 中间件
-        $dispatcher = RequestContext::getServerBean('HttpDispatcher');
-        $dispatcher->dispatch($e->request, $e->response);
+        RequestContext::muiltiSet([
+            'server'    =>  $e->request->getServerInstance(),
+            'request'   =>  $e->request,
+            'response'  =>  $e->response,
+            'fd'        =>  $e->request->getSwooleRequest()->fd,
+        ]);
 
         // 连接上下文创建
         ConnectContext::create();
 
-        // http 路由解析结果
-        $routeResult = RequestContext::get('routeResult');
-        unset($routeResult['callable']);
-        ConnectContext::set('httpRouteResult', $routeResult);
-
-        // 释放请求上下文
-        RequestContext::destroy();
+        // 中间件
+        $dispatcher = RequestContext::getServerBean('HttpDispatcher');
+        $dispatcher->dispatch($e->request, $e->response);
     }
 
 }

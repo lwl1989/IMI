@@ -6,6 +6,7 @@ use Imi\Db\Consts\LogicalOperator;
 use Imi\Db\Query\Interfaces\IWhere;
 use Imi\Db\Query\Interfaces\IBaseWhere;
 use Imi\Db\Query\Interfaces\IWhereBrackets;
+use Imi\Db\Query\Interfaces\IQuery;
 
 class WhereBrackets extends BaseWhere implements IWhereBrackets
 {
@@ -16,12 +17,6 @@ class WhereBrackets extends BaseWhere implements IWhereBrackets
      * @var callable
      */
     protected $callback;
-
-    /**
-     * 逻辑运算符
-     * @var string
-     */
-    protected $logicalOperator;
 
     /**
      * 绑定的数据们
@@ -73,7 +68,13 @@ class WhereBrackets extends BaseWhere implements IWhereBrackets
         $this->logicalOperator = $logicalOperator;
     }
 
-    public function toStringWithoutLogic()
+    /**
+     * 获取无逻辑的字符串
+     *
+     * @param IQuery $query
+     * @return string
+     */
+    public function toStringWithoutLogic(IQuery $query)
     {
         if($this->isRaw)
         {
@@ -89,11 +90,11 @@ class WhereBrackets extends BaseWhere implements IWhereBrackets
                 {
                     if(0 === $i)
                     {
-                        $result .= $callResultItem->toStringWithoutLogic() . ' ';
+                        $result .= $callResultItem->toStringWithoutLogic($query) . ' ';
                     }
                     else
                     {
-                        $result .= $callResultItem . ' ';
+                        $result .= $callResultItem->getLogicalOperator() . ' ' . $callResultItem->toStringWithoutLogic($query) . ' ';
                     }
                     $this->binds = array_merge($this->binds, $callResultItem->getBinds());
                 }
@@ -106,9 +107,7 @@ class WhereBrackets extends BaseWhere implements IWhereBrackets
         }
         else if($callResult instanceof IBaseWhere)
         {
-            $result = '(' . $callResult . ')';
-            $this->binds = $callResult->getBinds();
-            return $result;
+            return $callResult->toStringWithoutLogic($query);
         }
         else
         {

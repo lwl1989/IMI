@@ -36,6 +36,13 @@ class ServerRequest extends \Imi\Util\Http\Request implements ServerRequestInter
     protected $post = [];
 
     /**
+     * 包含 GET/POST/Cookie 数据
+     *
+     * @var array
+     */
+    protected $request = null;
+
+    /**
      * 上传的文件
      * @var \Yurun\Util\YurunHttp\Http\Psr7\UploadedFile[]
      */
@@ -61,7 +68,6 @@ class ServerRequest extends \Imi\Util\Http\Request implements ServerRequestInter
         $this->get = $get;
         $this->post = $post;
         parent::__construct($uri, $headers, $body, $method, $version);
-        $this->parseParsedBody();
         $this->setUploadedFiles($this, $files);
     }
 
@@ -237,6 +243,43 @@ class ServerRequest extends \Imi\Util\Http\Request implements ServerRequestInter
      */
     public function getParsedBody()
     {
+        if(null === $this->parsedBody)
+        {
+            $contentType = strtolower($this->getHeaderLine(RequestHeader::CONTENT_TYPE));
+            // post
+            if('POST' === $this->method && in_array($contentType, [
+                MediaType::APPLICATION_FORM_URLENCODED,
+                MediaType::MULTIPART_FORM_DATA,
+            ]))
+            {
+                $this->parsedBody = $this->post;
+            }
+            // json
+            else if(in_array($contentType, [
+                MediaType::APPLICATION_JSON,
+                MediaType::APPLICATION_JSON_UTF8,
+            ]))
+            {
+                $this->parsedBody = json_decode($this->body, !Config::get('@currentServer.jsonBodyIsObject', false));
+            }
+            // xml
+            else if(in_array($contentType, [
+                MediaType::TEXT_XML,
+                MediaType::APPLICATION_ATOM_XML,
+                MediaType::APPLICATION_RSS_XML,
+                MediaType::APPLICATION_XHTML_XML,
+                MediaType::APPLICATION_XML,
+            ]))
+            {
+                $this->parsedBody = new \DOMDocument();
+                $this->parsedBody->loadXML($this->body);
+            }
+            // 其它
+            else
+            {
+                $this->parsedBody = (object)(string)$this->body;
+            }
+        }
         return $this->parsedBody;
     }
 
@@ -381,48 +424,6 @@ class ServerRequest extends \Imi\Util\Http\Request implements ServerRequestInter
     }
 
     /**
-     * 处理处理后的主体内容
-     * @return void
-     */
-    protected function parseParsedBody()
-    {
-        $contentType = $this->getHeaderLine(RequestHeader::CONTENT_TYPE);
-        // post
-        if('POST' === $this->method && in_array($contentType, [
-            MediaType::APPLICATION_FORM_URLENCODED,
-            MediaType::MULTIPART_FORM_DATA,
-        ]))
-        {
-            $this->parsedBody = $this->post;
-        }
-        // json
-        else if(in_array($contentType, [
-            MediaType::APPLICATION_JSON,
-            MediaType::APPLICATION_JSON_UTF8,
-        ]))
-        {
-            $this->parsedBody = json_decode($this->body, !Config::get('@currentServer.jsonBodyIsObject', false));
-        }
-        // xml
-        else if(in_array($contentType, [
-            MediaType::TEXT_XML,
-            MediaType::APPLICATION_ATOM_XML,
-            MediaType::APPLICATION_RSS_XML,
-            MediaType::APPLICATION_XHTML_XML,
-            MediaType::APPLICATION_XML,
-        ]))
-        {
-            $this->parsedBody = new \DOMDocument();
-            $this->parsedBody->loadXML($this->body);
-        }
-        // 其它
-        else
-        {
-            $this->parsedBody = (object)(string)$this->body;
-        }
-    }
-
-    /**
      * 获取 GET 参数
      * 当 $name 为 null 时，返回所有
      * @param string $name
@@ -479,4 +480,46 @@ class ServerRequest extends \Imi\Util\Http\Request implements ServerRequestInter
     {
         return isset($this->post[$name]);
     }
+
+    /**
+     * 获取 REQUEST 参数
+     * 当 $name 为 null 时，返回所有
+     * REQUEST 中包括：GET/POST/COOKIE
+     *
+     * @param string $name
+     * @param mixed $default
+     * @return mixed
+     */
+    public function request($name = null, $default = null)
+    {
+        if(null === $this->request)
+        {
+            $this->request = array_merge($this->get, $this->post, $this->cookies);
+        }
+        if(null === $name)
+        {
+            return $this->request;
+        }
+        else
+        {
+            return $this->request[$name] ?? $default;
+        }
+    }
+
+    /**
+     * 判断是否存在 REQUEST 参数
+     * REQUEST 中包括：GET/POST/COOKIE
+     *
+     * @param string $name
+     * @return boolean
+     */
+    public function hasRequest($name)
+    {
+        if(null === $this->request)
+        {
+            $this->request = array_merge($this->get, $this->post, $this->cookies);
+        }
+        return isset($this->request[$name]);
+    }
+
 }

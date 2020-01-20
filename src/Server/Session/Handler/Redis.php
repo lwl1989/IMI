@@ -3,6 +3,7 @@ namespace Imi\Server\Session\Handler;
 
 use Imi\Bean\Annotation\Bean;
 use Imi\Pool\PoolManager;
+use Imi\App;
 
 /**
  * @Bean("SessionRedis")
@@ -19,7 +20,16 @@ class Redis extends Base
      * Redis中存储的key前缀，可以用于多系统session的分离
      * @var string
      */
-    protected $keyPrefix = 'imi:';
+    protected $keyPrefix;
+
+    public function __init()
+    {
+        parent::__init();
+        if(null === $this->keyPrefix)
+        {
+            $this->keyPrefix = 'imi:' . App::getNamespace() . ':';
+        }
+    }
 
     /**
      * 销毁session数据
@@ -50,7 +60,7 @@ class Redis extends Base
      */
     public function read($sessionID)
     {
-        return PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($sessionID, &$result){
+        return PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($sessionID){
             return $redis->get($this->getKey($sessionID));
         });
     }

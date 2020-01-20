@@ -22,12 +22,6 @@ interface IWhere extends IBaseWhere
     public function getValue();
 
     /**
-     * 逻辑运算符
-     * @return string
-     */
-    public function getLogicalOperator(): string;
-
-    /**
      * 字段名
      * @param string $fieldName
      * @return void
@@ -48,10 +42,4 @@ interface IWhere extends IBaseWhere
      */
     public function setValue($value);
 
-    /**
-     * 逻辑运算符
-     * @param string $logicalOperator
-     * @return void
-     */
-    public function setLogicalOperator(string $logicalOperator);
 }

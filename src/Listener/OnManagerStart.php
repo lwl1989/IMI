@@ -2,22 +2,16 @@
 namespace Imi\Listener;
 
 use Imi\App;
-use Imi\Config;
 use Imi\Util\Imi;
-use Imi\Util\File;
 use Imi\Util\Swoole;
-use Imi\Bean\Annotation;
-use Imi\Event\EventParam;
-use Imi\Process\ProcessManager;
 use Imi\Bean\Annotation\Listener;
-use Imi\Main\Helper as MainHelper;
-use Imi\Server\Event\Param\StartEventParam;
-use Imi\Server\Event\Listener\IStartEventListener;
+use Imi\Util\Process\ProcessType;
+use Imi\Util\Process\ProcessAppContexts;
 use Imi\Server\Event\Param\ManagerStartEventParam;
 use Imi\Server\Event\Listener\IManagerStartEventListener;
 
 /**
- * @Listener(eventName="IMI.MAIN_SERVER.MANAGER.START",priority=PHP_INT_MAX)
+ * @Listener(eventName="IMI.MAIN_SERVER.MANAGER.START",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class OnManagerStart implements IManagerStartEventListener
 {
@@ -28,6 +22,7 @@ class OnManagerStart implements IManagerStartEventListener
      */
     public function handle(ManagerStartEventParam $e)
     {
+        App::set(ProcessAppContexts::PROCESS_TYPE, ProcessType::MANAGER, true);
         Imi::setProcessName('manager');
 
         // 随机数播种
@@ -35,7 +30,7 @@ class OnManagerStart implements IManagerStartEventListener
 
         // 进程PID记录
         $fileName = Imi::getRuntimePath(str_replace('\\', '-', App::getNamespace()) . '.pid');
-        File::writeFile($fileName, json_encode([
+        file_put_contents($fileName, json_encode([
             'masterPID'     => Swoole::getMasterPID(),
             'managerPID'    => Swoole::getManagerPID(),
         ]));

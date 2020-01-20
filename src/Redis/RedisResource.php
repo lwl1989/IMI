@@ -2,13 +2,12 @@
 namespace Imi\Redis;
 
 use Imi\Pool\BasePoolResource;
-use Imi\Pool\Interfaces\IPoolResource;
 
 class RedisResource extends BasePoolResource
 {
     /**
-     * db对象
-     * @var \Redis
+     * Redis 对象
+     * @var \Imi\Redis\RedisHandler
      */
     private $redis;
 
@@ -31,7 +30,7 @@ class RedisResource extends BasePoolResource
      */
     public function open()
     {
-        $result = $this->redis->connect($this->config['host'] ?? '127.0.0.1', $this->config['port'] ?? 6379, $this->config['timeout'] ?? 2147483647);
+        $result = $this->redis->connect($this->config['host'] ?? '127.0.0.1', $this->config['port'] ?? 6379, $this->config['timeout'] ?? null);
         if(isset($this->config['password']))
         {
             $result = $result && $this->redis->auth($this->config['password']);
@@ -43,6 +42,10 @@ class RedisResource extends BasePoolResource
         if($this->config['serialize'] ?? true)
         {
             $result = $result && $this->redis->setOption(\Redis::OPT_SERIALIZER, \Redis::SERIALIZER_PHP);
+        }
+        foreach($this->config['options'] ?? [] as $key => $value)
+        {
+            $this->redis->setOption($key, $value);
         }
         return $result;
     }
@@ -82,7 +85,9 @@ class RedisResource extends BasePoolResource
     public function checkState(): bool
     {
         try{
-            return '+PONG' === $this->redis->ping();
+            $result = $this->redis->ping();
+            // PHPRedis 扩展，5.0.0 版本开始，ping() 返回为 true，旧版本为 +PONG
+            return true === $result || '+PONG' === $result;
         }catch(\Throwable $ex)
         {
             return false;

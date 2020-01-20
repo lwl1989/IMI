@@ -3,14 +3,12 @@ namespace Imi\Db\Query\Builder;
 
 use Imi\Db\Query\Field;
 use Imi\Db\Query\Query;
-use Imi\Db\Traits\SqlParser;
 use Imi\Db\Query\Traits\TKeyword;
 use Imi\Db\Query\Interfaces\IQuery;
 
 abstract class BaseBuilder implements IBuilder
 {
     use TKeyword;
-    use SqlParser;
     
     /**
      * 分隔标识符，解决保留字问题
@@ -128,7 +126,7 @@ abstract class BaseBuilder implements IBuilder
         foreach($where as $item)
         {
             $result[] = $item->getLogicalOperator();
-            $result[] = $item->toStringWithoutLogic();
+            $result[] = $item->toStringWithoutLogic($this->query);
             $this->params = array_merge($this->params, $item->getBinds());
         }
         unset($result[0]);
@@ -154,15 +152,15 @@ abstract class BaseBuilder implements IBuilder
         }
         else if(null === $offset)
         {
-            $limitName = Query::getAutoParamName();
+            $limitName = $this->query->getAutoParamName();
             $this->params[$limitName] = (int)$limit;
             return ' limit ' . $limitName;
         }
         else
         {
-            $offsetName = Query::getAutoParamName();
+            $offsetName = $this->query->getAutoParamName();
             $this->params[$offsetName] = (int)$offset;
-            $limitName = Query::getAutoParamName();
+            $limitName = $this->query->getAutoParamName();
             $this->params[$limitName] = (int)$limit;
             return ' limit ' . $offsetName . ',' . $limitName;
         }
@@ -218,7 +216,7 @@ abstract class BaseBuilder implements IBuilder
         foreach($having as $item)
         {
             $result[] = $item->getLogicalOperator();
-            $result[] = $item->toStringWithoutLogic();
+            $result[] = $item->toStringWithoutLogic($this->query);
             $this->params = array_merge($this->params, $item->getBinds());
         }
         unset($result[0]);

@@ -4,16 +4,23 @@ namespace Imi\Server\Http\Route;
 use Imi\Util\Imi;
 use Imi\Util\Text;
 use Imi\Bean\Annotation\Bean;
-use Imi\Server\Route\BaseRoute;
 use Imi\Server\Http\Message\Request;
 use Imi\Server\Route\Annotation\Route as RouteAnnotation;
 use Imi\Server\Route\RouteCallable;
+use Imi\Server\View\Parser\ViewParser;
+use Imi\Util\Uri;
 
 /**
  * @Bean("HttpRoute")
  */
-class HttpRoute extends BaseRoute
+class HttpRoute
 {
+    /**
+     * 路由规则
+     * @var \Imi\Server\Http\Route\RouteItem[][]
+     */
+    protected $rules = [];
+
     /**
      * url规则缓存
      * @var array
@@ -22,7 +29,7 @@ class HttpRoute extends BaseRoute
 
     /**
      * 检查URL是否匹配的缓存
-     * @var array
+     * @var \Imi\Server\Http\Route\UrlCheckResult[][]
      */
     private $urlCheckCache = [];
 
@@ -46,78 +53,153 @@ class HttpRoute extends BaseRoute
     protected $ignoreCase = false;
 
     /**
+     * 增加路由规则
+     * @param string $url url规则
+     * @param mixed $callable 回调
+     * @param \Imi\Server\Route\Annotation\Route $annotation 路由定义注解，可选
+     * @return void
+     */
+    public function addRule(string $url, $callable, \Imi\Server\Route\Annotation\Route $annotation = null)
+    {
+        if(null === $annotation)
+        {
+            $annotation = new \Imi\Server\Route\Annotation\Route([
+                'url' => $url,
+            ]);
+        }
+        $this->rules[$url][spl_object_hash($annotation)] = new RouteItem($annotation, $callable, ViewParser::getInstance()->getByCallable($callable));
+    }
+
+    /**
+     * 增加路由规则，直接使用注解方式
+     * @param \Imi\Server\Route\Annotation\Route $annotation
+     * @param mixed $callable
+     * @param array $options
+     * @return void
+     */
+    public function addRuleAnnotation(\Imi\Server\Route\Annotation\Route $annotation, $callable, $options = [])
+    {
+        $routeItem = new RouteItem($annotation, $callable, ViewParser::getInstance()->getByCallable($callable), $options);
+        if(isset($options['middlewares']))
+        {
+            $routeItem->middlewares = $options['middlewares'];
+        }
+        if(isset($options['wsConfig']))
+        {
+            $routeItem->wsConfig = $options['wsConfig'];
+        }
+        if(isset($options['singleton']))
+        {
+            $routeItem->singleton = $options['singleton'];
+        }
+        $this->rules[$annotation->url][spl_object_hash($annotation)] = $routeItem;
+    }
+
+    /**
+     * 清空路由规则
+     * @return void
+     */
+    public function clearRules()
+    {
+        $this->rules = [];
+    }
+
+    /**
+     * 路由规则是否存在
+     * @param \Imi\Server\Route\Annotation\Route $rule
+     * @return boolean
+     */
+    public function existsRule(RouteAnnotation $rule)
+    {
+        return isset($this->rules[$rule->url][spl_object_hash($rule)]);
+    }
+
+    /**
+     * 获取路由规则
+     * @return array
+     */
+    public function getRules()
+    {
+        return $this->rules;
+    }
+
+    /**
      * 路由解析处理
      * @param Request $request
-     * @return array
+     * @return \Imi\Server\Http\Route\RouteResult|null
      */
     public function parse(Request $request)
     {
-        foreach($this->rules as $url => $items)
+        $pathInfo = $request->getServerParam('path_info');
+        if(isset($this->rules[$pathInfo]))
         {
-            $result = $this->checkUrl($request, $url, $params);
-            if($result['result'] || $result['resultIgnoreCase'])
+            $rules = [$pathInfo => $this->rules[$pathInfo]];
+        }
+        else
+        {
+            $rules = [];
+        }
+        for($i = 0; $i < 2; ++$i)
+        {
+            /** @var \Imi\Server\Http\Route\RouteItem[] $items */
+            foreach($rules as $urlRule => $items)
             {
-                foreach($items as $item)
+                $result = $this->checkUrl($urlRule, $pathInfo);
+                if($result->result || $result->resultIgnoreCase)
                 {
-                    if(
-                        ($result['result'] || ($this->ignoreCase || $item['annotation']->ignoreCase)) &&
-                        $this->checkMethod($request, $item['annotation']->method) &&
-                        $this->checkDomain($request, $item['annotation']->domain, $domainParams) &&
-                        $this->checkParamsGet($request, $item['annotation']->paramsGet) &&
-                        $this->checkParamsPost($request, $item['annotation']->paramsPost) &&
-                        $this->checkHeader($request, $item['annotation']->header) &&
-                        $this->checkRequestMime($request, $item['annotation']->requestMime)
-                    )
+                    foreach($items as $item)
                     {
-                        $params = array_merge($params, $domainParams);
-                        return [
-                            'params'        => $params,
-                            'callable'      => $this->parseCallable($params, $item['callable']),
-                            'middlewares'   => $item['middlewares'] ?? [],
-                            'wsConfig'      => $item['wsConfig'],
-                        ];
+                        if(
+                            ($result->result || ($this->ignoreCase || $item->annotation->ignoreCase)) &&
+                            $this->checkMethod($request, $item->annotation->method) &&
+                            $this->checkDomain($request, $item->annotation->domain, $domainParams) &&
+                            $this->checkParamsGet($request, $item->annotation->paramsGet) &&
+                            $this->checkParamsPost($request, $item->annotation->paramsPost) &&
+                            $this->checkHeader($request, $item->annotation->header) &&
+                            $this->checkRequestMime($request, $item->annotation->requestMime)
+                        )
+                        {
+                            if([] === $domainParams)
+                            {
+                                $params = $result->params;
+                            }
+                            else
+                            {
+                                $params = array_merge($result->params, $domainParams);
+                            }
+                            return new RouteResult(clone $item, $result, $params);
+                        }
                     }
                 }
             }
+            $rules = $this->rules;
         }
         return null;
     }
 
     /**
      * 检查验证url是否匹配
-     * @param Request $request
-     * @param string $url
+     * @param string $urlRule
      * @param array $params url路由中的自定义参数
-     * @return array
+     * @return \Imi\Server\Http\Route\UrlCheckResult
      */
-    private function checkUrl(Request $request, string $url, &$params)
+    public function checkUrl(string $urlRule, string $pathInfo)
     {
-        $pathInfo = $request->getServerParam('path_info');
-        if(!isset($this->urlCheckCache[$pathInfo][$url]))
+        if(!isset($this->urlCheckCache[$pathInfo][$urlRule]))
         {
-            $rule = $this->parseRule($url, $fields);
+            $rule = $this->parseRule($urlRule, $fields);
             $params = [];
-            if(preg_match_all($rule, $pathInfo, $matches) > 0)
+            if($result = preg_match_all($rule, $pathInfo, $matches) > 0)
             {
                 foreach($fields as $i => $fieldName)
                 {
                     $params[$fieldName] = $matches[$i + 1][0];
                 }
-                $result = [
-                    'result' => true,
-                    'params' => $params,
-                ];
             }
-            else
+            $result = new UrlCheckResult($result, $params);
+            if($result->result)
             {
-                $result = [
-                    'result' => false,
-                    'params' => $params,
-                ];
-            }
-            if($result['result'])
-            {
-                $result['resultIgnoreCase'] = true;
+                $result->resultIgnoreCase = true;
             }
             // 正则加i忽略大小写
             else if(preg_match_all($rule . 'i', $pathInfo, $matches) > 0)
@@ -126,12 +208,12 @@ class HttpRoute extends BaseRoute
                 {
                     $params[$fieldName] = $matches[$i + 1][0];
                 }
-                $result['resultIgnoreCase'] = true;
-                $result['params'] = $params;
+                $result->resultIgnoreCase = true;
+                $result->params = $params;
             }
             else
             {
-                $result['resultIgnoreCase'] = false;
+                $result->resultIgnoreCase = false;
             }
             // 最大缓存数量处理
             if($this->urlCheckCacheCount >= $this->urlCacheNumber)
@@ -139,11 +221,10 @@ class HttpRoute extends BaseRoute
                 array_shift($this->urlCheckCache);
                 --$this->urlCheckCacheCount;
             }
-            $this->urlCheckCache[$pathInfo][$url] = $result;
+            $this->urlCheckCache[$pathInfo][$urlRule] = $result;
             ++$this->urlCheckCacheCount;
         }
-        $params = $this->urlCheckCache[$pathInfo][$url]['params'];
-        return $this->urlCheckCache[$pathInfo][$url];
+        return $this->urlCheckCache[$pathInfo][$urlRule];
     }
 
     /**
@@ -157,12 +238,15 @@ class HttpRoute extends BaseRoute
         if(!isset($this->rulesCache[$rule]))
         {
             $fields = [];
-            $rule = str_replace(['/', '\{', '\}'], ['\/', '{', '}'], preg_quote($rule));
+            if(false !== strpos($rule, '/'))
+            {
+                $rule = str_replace('/', '\/', $rule);
+            }
             $this->rulesCache[$rule] = '/^' . preg_replace_callback(
-                '/{([^}]+)}/i',
+                '/\{([^:]+)(?::([^{}]*(?:\{(?-1)\}[^{}]*)*))?\}/',
                 function($matches)use(&$fields){
                     $fields[] = $matches[1];
-                    return '(.+)';
+                    return '(' . ($matches[2] ?? '.+') . ')';
                 },
                 $rule
             ) . '\/?$/';
@@ -178,7 +262,7 @@ class HttpRoute extends BaseRoute
      */
     private function checkMethod(Request $request, $method)
     {
-        if(Text::isEmpty($method))
+        if(null === $method)
         {
             return true;
         }
@@ -201,7 +285,7 @@ class HttpRoute extends BaseRoute
     private function checkDomain(Request $request, $domain, &$params)
     {
         $params = [];
-        if(Text::isEmpty($domain))
+        if(null === $domain)
         {
             return true;
         }
@@ -212,7 +296,7 @@ class HttpRoute extends BaseRoute
         foreach($domain as $rule)
         {
             $rule = $this->parseRule($rule, $fields);
-            if(preg_match_all($rule, $request->getUri()->getDomain(), $matches) > 0)
+            if(preg_match_all($rule, Uri::getDomain($request->getUri()), $matches) > 0)
             {
                 $params = [];
                 foreach($fields as $i => $fieldName)
@@ -233,7 +317,7 @@ class HttpRoute extends BaseRoute
      */
     private function checkParamsGet(Request $request, $params)
     {
-        if(empty($params))
+        if(null === $params)
         {
             return true;
         }
@@ -250,7 +334,7 @@ class HttpRoute extends BaseRoute
      */
     private function checkParamsPost(Request $request, $params)
     {
-        if(empty($params))
+        if(null === $params)
         {
             return true;
         }
@@ -267,7 +351,7 @@ class HttpRoute extends BaseRoute
      */
     private function checkHeader(Request $request, $header)
     {
-        if(empty($header))
+        if(null === $header)
         {
             return true;
         }
@@ -284,29 +368,11 @@ class HttpRoute extends BaseRoute
      */
     private function checkRequestMime(Request $request, $requestMime)
     {
-        if(empty($requestMime))
+        if(null === $requestMime)
         {
             return true;
         }
         return Imi::checkCompareValues($requestMime, $request->getHeaderLine('Content-Type'));
-    }
-
-    /**
-     * 处理回调
-     * @param array $params
-     * @param mixed $callable
-     * @return callable
-     */
-    private function parseCallable($params, $callable)
-    {
-        if($callable instanceof RouteCallable)
-        {
-            return $callable->getCallable($params);
-        }
-        else
-        {
-            return $callable;
-        }
     }
 
     /**

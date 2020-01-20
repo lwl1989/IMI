@@ -64,11 +64,18 @@ class Inotify extends BaseMonitor
             }
             else
             {
-                $rule = "/^(?!{$this->excludeRule}).+$/i";
-                $regex = new \RegexIterator($iterator, $rule, \RecursiveRegexIterator::GET_MATCH);
-                foreach ($regex as $item)
+                foreach(File::enumFile($path) as $file)
                 {
-                    $filePath = dirname($item[0]);
+                    $fullPath = $file->getFullPath();
+                    foreach($this->excludePaths as $path)
+                    {
+                        if(substr($fullPath, 0, strlen($path)) === $path)
+                        {
+                            $file->setContinue(false);
+                            continue 2;
+                        }
+                    }
+                    $filePath = $file->getPath();
                     if(!isset($this->paths[$filePath]))
                     {
                         $this->paths[$filePath] = \inotify_add_watch($this->handler, $filePath, $this->mask);
@@ -85,12 +92,11 @@ class Inotify extends BaseMonitor
     public function isChanged(): bool
     {
         $this->changedFiles = [];
-        $result = null;
         do{
             $readResult = \inotify_read($this->handler);
             if(false === $readResult)
             {
-                return $result ?? false;
+                return isset($this->changedFiles[0]);
             }
             foreach($readResult as $item)
             {
@@ -110,7 +116,6 @@ class Inotify extends BaseMonitor
                     $this->paths[$filePath] = \inotify_add_watch($this->handler, $filePath, $this->mask);
                 }
             }
-            $result = isset($readResult[0]);
         }while(true);
     }
 

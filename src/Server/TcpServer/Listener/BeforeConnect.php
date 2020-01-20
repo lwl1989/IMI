@@ -11,7 +11,7 @@ use Imi\Server\Event\Listener\IConnectEventListener;
 
 /**
  * Connect事件前置处理
- * @ClassEventListener(className="Imi\Server\TcpServer\Server",eventName="connect",priority=PHP_INT_MAX)
+ * @ClassEventListener(className="Imi\Server\TcpServer\Server",eventName="connect",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class BeforeConnect implements IConnectEventListener
 {
@@ -24,13 +24,15 @@ class BeforeConnect implements IConnectEventListener
     {
         if(!Worker::isWorkerStartAppComplete())
         {
-            $GLOBALS['WORKER_START_END_RESUME_COIDS'][] = Coroutine::getuid();
-            Coroutine::suspend();
+            $e->server->getSwooleServer()->close($e->fd);
+            $e->stopPropagation();
+            return;
         }
         // 上下文创建
-        RequestContext::create();
-        RequestContext::set('server', $e->server);
-        RequestContext::set('fd', $e->fd);
+        RequestContext::muiltiSet([
+            'server'    =>  $e->server,
+            'fd'        =>  $e->fd,
+        ]);
 
         // 连接上下文创建
         ConnectContext::create();

@@ -15,6 +15,20 @@ class Redis extends Base
      * @var string
      */
     protected $poolName;
+
+    /**
+     * 缓存键前缀
+     *
+     * @var string
+     */
+    protected $prefix;
+
+    /**
+     * 将 key 中的 "." 替换为 ":"
+     *
+     * @var boolean
+     */
+    protected $replaceDot = false;
     
     /**
      * Fetches a value from the cache.
@@ -31,9 +45,9 @@ class Redis extends Base
     {
         $this->checkKey($key);
         $result = PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($key){
-            return $redis->get($key);
+            return $redis->get($this->parseKey($key));
         });
-        if(null === $result)
+        if(false === $result)
         {
             return $default;
         }
@@ -65,8 +79,8 @@ class Redis extends Base
         {
             $ttl = DateTime::getSecondsByInterval($ttl);
         }
-        return PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($key, $value, $ttl){
-            return $redis->set($key, $this->encode($value), $ttl);
+        return (bool)PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($key, $value, $ttl){
+            return $redis->set($this->parseKey($key), $this->encode($value), $ttl);
         });
     }
 
@@ -83,8 +97,8 @@ class Redis extends Base
     public function delete($key)
     {
         $this->checkKey($key);
-        return PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($key){
-            return $redis->del($key) > 0;
+        return (bool)PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($key){
+            return $redis->del($this->parseKey($key)) > 0;
         });
     }
 
@@ -95,7 +109,7 @@ class Redis extends Base
      */
     public function clear()
     {
-        return PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis){
+        return (bool)PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis){
             return $redis->flushDB();
         });
     }
@@ -116,12 +130,16 @@ class Redis extends Base
     {
         $this->checkArrayOrTraversable($keys);
         $mgetResult = PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($keys){
+            foreach($keys as &$key)
+            {
+                $key = $this->parseKey($key);
+            }
             return $redis->mget($keys);
         });
         $result = [];
         foreach($mgetResult as $i => $v)
         {
-            if(null === $v)
+            if(false === $v)
             {
                 $result[$keys[$i]] = $default;
             }
@@ -160,7 +178,7 @@ class Redis extends Base
         }
         foreach($setValues as $k => $v)
         {
-            $setValues[$k] = $this->encode($v);
+            $setValues[$this->parseKey($k)] = $this->encode($v);
         }
         // ttl 支持 \DateInterval 格式
         if($ttl instanceof \DateInterval)
@@ -178,7 +196,7 @@ class Redis extends Base
             }
             return $result;
         });
-        return $result;
+        return (bool)$result;
     }
 
     /**
@@ -196,6 +214,10 @@ class Redis extends Base
     {
         $this->checkArrayOrTraversable($keys);
         return (bool)PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($keys){
+            foreach($keys as &$key)
+            {
+                $key = $this->parseKey($key);
+            }
             return $redis->del($keys);
         });
     }
@@ -219,7 +241,27 @@ class Redis extends Base
     {
         $this->checkKey($key);
         return (bool)PoolManager::use($this->poolName, function($resource, \Imi\Redis\RedisHandler $redis) use($key){
-            return $redis->exists($key);
+            return $redis->exists($this->parseKey($key));
         });
     }
+
+    /**
+     * 处理键
+     *
+     * @param string $key
+     * @return string
+     */
+    public function parseKey(string $key): string
+    {
+        if($this->replaceDot)
+        {
+            $key = str_replace('.', ':', $key);
+        }
+        if($this->prefix)
+        {
+            $key = $this->prefix . $key;
+        }
+        return $key;
+    }
+
 }

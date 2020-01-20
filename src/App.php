@@ -2,23 +2,21 @@
 namespace Imi;
 
 use Imi\Config;
-use Imi\Util\File;
+use Imi\Util\Imi;
+use Imi\Util\Args;
 use Imi\Event\Event;
-use Imi\Log\LogLevel;
-use Imi\Main\BaseMain;
 use Imi\Bean\Container;
 use Imi\Util\Coroutine;
 use Imi\Bean\Annotation;
 use Imi\Pool\PoolConfig;
 use Imi\Pool\PoolManager;
 use Imi\Cache\CacheManager;
-use Imi\Server\Http\Server;
 use Imi\Main\Helper as MainHelper;
 use Imi\Util\CoroutineChannelManager;
-use Imi\Util\Imi;
-use Imi\Util\Random;
 use Imi\Bean\Annotation\AnnotationManager;
-use Imi\Util\Args;
+use Imi\Util\Process\ProcessAppContexts;
+use Imi\Util\Process\ProcessType;
+use Imi\Util\Text;
 
 abstract class App
 {
@@ -61,12 +59,35 @@ abstract class App
     private static $runtimeInfo;
 
     /**
+     * 是否协程服务器模式
+     *
+     * @var boolean
+     */
+    private static $isCoServer = false;
+
+    /**
+     * 上下文集合
+     *
+     * @var array
+     */
+    private static $context = [];
+
+    /**
+     * 只读上下文键名列表
+     *
+     * @var string[]
+     */
+    private static $contextReadonly = [];
+
+    /**
      * 框架服务运行入口
      * @param string $namespace 应用命名空间
      * @return void
      */
     public static function run($namespace)
     {
+        self::set(ProcessAppContexts::PROCESS_NAME, ProcessType::MASTER, true);
+        self::set(ProcessAppContexts::MASTER_PID, getmypid(), true);
         static::$namespace = $namespace;
         static::outImi();
         static::outStartupInfo();
@@ -79,11 +100,18 @@ abstract class App
      */
     private static function initFramework()
     {
+        $useShortname = ini_get_all('swoole')['swoole.use_shortname']['local_value'];
+        $useShortname = strtolower(trim(str_replace('0', '', $useShortname)));
+        if (in_array($useShortname, ['', 'off', 'false'], true)) {
+            echo 'Please enable swoole short name before using imi!', PHP_EOL, 'You can set swoole.use_shortname = on into your php.ini.', PHP_EOL;
+            return;
+        }
         if(!isset($_SERVER['argv'][1]))
         {
             echo "Has no operation! You can try the command: \033[33;33m", $_SERVER['argv'][0], " server/start\033[0m", PHP_EOL;
             return;
         }
+        AnnotationManager::init();
         static::$runtimeInfo = new RuntimeInfo;
         static::$container = new Container;
         // 初始化Main类
@@ -93,9 +121,14 @@ abstract class App
         {
             $result = false;
         }
+        else if($file = Args::get('imi-runtime'))
+        {
+            // 尝试加载指定 runtime
+            $result = App::loadRuntimeInfo($file);
+        }
         else
         {
-            // 尝试加载
+            // 尝试加载默认 runtime
             $result = App::loadRuntimeInfo(Imi::getRuntimePath('imi-runtime.cache'));
         }
         if(!$result)
@@ -104,7 +137,12 @@ abstract class App
             Annotation::getInstance()->init([
                 MainHelper::getMain('Imi', 'Imi'),
             ]);
+            if('server/start' === $_SERVER['argv'][1])
+            {
+                Imi::buildRuntime(Imi::getRuntimePath('imi-runtime-bak.cache'));
+            }
         }
+        unset($result, $useShortname);
         static::$isInited = true;
         Event::trigger('IMI.INITED');
     }
@@ -116,16 +154,22 @@ abstract class App
     private static function initMains()
     {
         // 框架
-        MainHelper::getMain('Imi', 'Imi');
+        if(!MainHelper::getMain('Imi', 'Imi'))
+        {
+            throw new \RuntimeException('Framework imi must have the class Imi\\Main');
+        }
         // 项目
-        MainHelper::getMain(static::$namespace, 'app');
+        if(!MainHelper::getMain(static::$namespace, 'app'))
+        {
+            throw new \RuntimeException(sprintf('Your app must have the class %s\\Main', static::$namespace));
+        }
         // 服务器们
         $servers = array_merge(['main'=>Config::get('@app.mainServer')], Config::get('@app.subServers', []));
         foreach($servers as $serverName => $item)
         {
-            if($item)
+            if($item && !MainHelper::getMain($item['namespace'], 'server.' . $serverName))
             {
-                MainHelper::getMain($item['namespace'], 'server.' . $serverName);
+                throw new \RuntimeException(sprintf('Server [%s] must have the class %s\\Main', $serverName, $item['namespace']));
             }
         }
     }
@@ -156,12 +200,46 @@ abstract class App
     }
 
     /**
+     * 创建协程服务器
+     *
+     * @param string $name
+     * @param int $workerNum
+     * @return \Imi\Server\CoServer
+     */
+    public static function createCoServer($name, $workerNum)
+    {
+        static::$isCoServer = true;
+        $server = ServerManage::createCoServer($name, $workerNum);
+        return $server;
+    }
+
+    /**
+     * 是否协程服务器模式
+     *
+     * @return boolean
+     */
+    public static function isCoServer()
+    {
+        return static::$isCoServer;
+    }
+
+    /**
      * 获取应用命名空间
      * @return string
      */
     public static function getNamespace()
     {
         return static::$namespace;
+    }
+
+    /**
+     * 获取容器对象
+     *
+     * @return \Imi\Bean\Container
+     */
+    public static function getContainer()
+    {
+        return static::$container;
     }
 
     /**
@@ -209,7 +287,7 @@ abstract class App
      */
     public static function initWorker()
     {
-        App::loadRuntimeInfo(Imi::getRuntimePath('runtime.cache'));
+        App::loadRuntimeInfo(Imi::getRuntimePath('runtime.cache'), true);
 
         // Worker 进程初始化前置
         Event::trigger('IMI.INIT.WORKER.BEFORE');
@@ -230,6 +308,7 @@ abstract class App
         }
 
         // 初始化
+        PoolManager::clearPools();
         if(Coroutine::isIn())
         {
             $pools = Config::get('@app.pools', []);
@@ -269,6 +348,7 @@ abstract class App
         }
 
         // 缓存初始化
+        CacheManager::clearPools();
         $caches = Config::get('@app.caches', []);
         foreach($appMains as $main)
         {
@@ -316,27 +396,44 @@ abstract class App
 
     /**
      * 从文件加载运行时数据
+     * $minimumAvailable 设为 true，则 getRuntimeInfo() 无法获取到数据
      *
      * @param string $fileName
+     * @param bool $minimumAvailable
      * @return boolean
      */
-    public static function loadRuntimeInfo($fileName)
+    public static function loadRuntimeInfo($fileName, $minimumAvailable = false)
     {
         if(!is_file($fileName))
         {
             return false;
         }
-        static::$runtimeInfo = unserialize(file_get_contents($fileName));
-        $data = static::$runtimeInfo->annotationParserData;
-        Annotation::getInstance()->getParser()->setData($data[0]);
-        Annotation::getInstance()->getParser()->setFileMap($data[1]);
-        Annotation::getInstance()->getParser()->setParsers(static::$runtimeInfo->annotationParserParsers);
+        // Swoole 4.4.x 下 hook file_get_contents 有奇怪 bug，所以根据不同情况用不同方法
+        if(Coroutine::isIn())
+        {
+            $content = Coroutine::readFile($fileName);
+        }
+        else
+        {
+            $content = file_get_contents($fileName);
+        }
+        static::$runtimeInfo = unserialize($content);
+        if(!$minimumAvailable)
+        {
+            Annotation::getInstance()->getParser()->loadStoreData(static::$runtimeInfo->annotationParserData);
+            Annotation::getInstance()->getParser()->setParsers(static::$runtimeInfo->annotationParserParsers);
+        }
         AnnotationManager::setAnnotations(static::$runtimeInfo->annotationManagerAnnotations);
         AnnotationManager::setAnnotationRelation(static::$runtimeInfo->annotationManagerAnnotationRelation);
         foreach(static::$runtimeInfo->parsersData as $parserClass => $data)
         {
             $parser = $parserClass::getInstance();
             $parser->setData($data);
+        }
+        Event::trigger('IMI.LOAD_RUNTIME_INFO');
+        if($minimumAvailable)
+        {
+            static::$runtimeInfo = null;
         }
         return true;
     }
@@ -366,11 +463,62 @@ STR;
      */
     public static function outStartupInfo()
     {
-        echo 'System: ', defined('PHP_OS_FAMILY') ? PHP_OS_FAMILY : PHP_OS, PHP_EOL
-        , 'PHP: v', PHP_VERSION, PHP_EOL
-        , 'Swoole: v', SWOOLE_VERSION, PHP_EOL
-        , 'Timezone: ', date_default_timezone_get(), PHP_EOL
-        , PHP_EOL;
+        echo '[System]', PHP_EOL;
+        echo 'System: ', defined('PHP_OS_FAMILY') ? PHP_OS_FAMILY : PHP_OS, PHP_EOL;
+        echo 'CPU: ', swoole_cpu_num(), ' Cores', PHP_EOL;
+        echo 'Disk: Free ', round(@disk_free_space('.') / (1024*1024*1024), 3), ' GB / Total ', round(@disk_total_space('.') / (1024*1024*1024), 3), ' GB', PHP_EOL;
+
+        echo PHP_EOL, '[Network]', PHP_EOL;
+        foreach(swoole_get_local_ip() as $name => $ip)
+        {
+            echo 'ip@', $name, ': ', $ip, PHP_EOL;
+        }
+
+        echo PHP_EOL, '[PHP]', PHP_EOL;
+        echo 'Version: v', PHP_VERSION, PHP_EOL;
+        echo 'Swoole: v', SWOOLE_VERSION, PHP_EOL;
+        echo 'Timezone: ', date_default_timezone_get(), PHP_EOL;
+
+        echo PHP_EOL;
+    }
+
+    /**
+     * 获取应用上下文数据
+     * @param string $name
+     * @param mixed $default
+     * @return mixed
+     */
+    public static function get($name, $default = null)
+    {
+        return static::$context[$name] ?? $default;
+    }
+
+    /**
+     * 设置应用上下文数据
+     * @param string $name
+     * @param mixed $value
+     * @param bool $readonly
+     * @return void
+     */
+    public static function set($name, $value, $readonly = false)
+    {
+        if(isset(static::$contextReadonly[$name]))
+        {
+            $backtrace = debug_backtrace(DEBUG_BACKTRACE_PROVIDE_OBJECT | DEBUG_BACKTRACE_IGNORE_ARGS, 2);
+            $backtrace = $backtrace[1] ?? null;
+            if(!(
+                (isset($backtrace['object']) && $backtrace['object'] instanceof \Imi\Bean\IBean)
+                || (isset($backtrace['class']) && Text::startwith($backtrace['class'], 'Imi\\'))
+            ))
+            {
+                throw new \RuntimeException('Cannot write to read-only application context');
+            }
+        }
+        else if($readonly)
+        {
+            static::$contextReadonly[$name] = true;
+        }
+        static::$context[$name] = $value;
     }
 
 }

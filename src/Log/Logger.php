@@ -12,6 +12,7 @@ use Psr\Log\AbstractLogger;
 use Imi\Bean\Annotation\Bean;
 use Imi\Util\Imi;
 use Imi\Util\Traits\TBeanRealClass;
+use Imi\Event\Event;
 
 /**
  * @Bean("Logger")
@@ -78,28 +79,15 @@ class Logger extends AbstractLogger
      */
     protected $records = [];
     
-    /**
-     * 定时器ID
-     *
-     * @var int
-     */
-    private $timerID;
-
     public function __init()
     {
         foreach(array_merge($this->coreHandlers, $this->exHandlers) as $handlerOption)
         {
             $this->handlers[] = BeanFactory::newInstance($handlerOption['class'], $handlerOption['options']);
         }
-    }
-
-    public function __destruct()
-    {
-        if(null !== $this->timerID)
-        {
-            swoole_timer_clear($this->timerID);
-            $this->timerID = null;
-        }
+        Event::on(['IMI.MAIN_SERVER.WORKER.EXIT', 'IMI.PROCESS.END'], function(){
+            $this->save();
+        }, \Imi\Util\ImiPriority::IMI_MIN + 1);
     }
 
     /**
@@ -208,7 +196,11 @@ class Logger extends AbstractLogger
      */
     public function addExHandler($exHandler)
     {
-        $this->exHandlers = $exHandler;
+        if(in_array($exHandler, $this->exHandlers))
+        {
+            return; // 防止重复添加
+        }
+        $this->exHandlers[] = $exHandler;
         $this->handlers[] = BeanFactory::newInstance($exHandler['class'], $exHandler['options']);
     }
 }

@@ -4,6 +4,7 @@ namespace Imi\Db\Statement;
 use Imi\RequestContext;
 use Imi\Db\Interfaces\IDb;
 use Imi\Db\Interfaces\IStatement;
+use Imi\Exception\RequestContextException;
 
 abstract class StatementManager
 {
@@ -27,12 +28,46 @@ abstract class StatementManager
             'statement'     =>  $statement,
             'using'         =>  $using,
         ];
-        if($using && RequestContext::exists())
+        if($using)
         {
-            $statementCaches = RequestContext::get('statementCaches', []);
-            $statementCaches[] = $statement;
-            RequestContext::set('statementCaches', $statementCaches);
+            try {
+                $context = RequestContext::getContext();
+                $context['statementCaches'][] = $statement;
+            } catch(RequestContextException $e) {
+
+            }
         }
+    }
+
+    /**
+     * 设置statement缓存，存在则不设置
+     *
+     * @param IStatement $statement
+     * @param bool $using
+     * @return bool
+     */
+    public static function setNX(IStatement $statement, bool $using)
+    {
+        $hashCode = $statement->getDb()->hashCode();
+        $sql = $statement->getSql();
+        if(isset(static::$statements[$hashCode][$sql]))
+        {
+            return false;
+        }
+        static::$statements[$hashCode][$sql] = [
+            'statement'     =>  $statement,
+            'using'         =>  $using,
+        ];
+        if($using)
+        {
+            try {
+                $context = RequestContext::getContext();
+                $context['statementCaches'][] = $statement;
+            } catch(RequestContextException $e) {
+
+            }
+        }
+        return true;
     }
 
     /**
@@ -49,59 +84,52 @@ abstract class StatementManager
     public static function get(IDb $db, string $sql)
     {
         $hashCode = $db->hashCode();
-        $result = static::$statements[$hashCode][$sql] ?? null;
-        if(null === $result)
+        $statement = &static::$statements[$hashCode][$sql] ?? null;
+        if(null === $statement)
         {
-            return $result;
+            return $statement;
         }
-        if($result['using'])
+        if($statement['using'])
         {
             return false;
         }
-        static::$statements[$hashCode][$sql]['using'] = true;
-        $statement = static::$statements[$hashCode][$sql];
-        if(RequestContext::exists())
-        {
-            $statementCaches = RequestContext::get('statementCaches', []);
-            $statementCaches[] = $statement['statement'];
-            RequestContext::set('statementCaches', $statementCaches);
+        $statement['using'] = true;
+        try {
+            $context = RequestContext::getContext();
+            $context['statementCaches'][] = $statement['statement'];
+        } catch(RequestContextException $e) {
+
         }
         return $statement;
     }
 
     /**
-     * 将statement设为可用
+     * 将连接中对应sql的statement设为可用
      *
      * @param IStatement $statement
      * @return void
      */
-    public static function unUsingStatement(IStatement $statement)
+    public static function unUsing(IStatement $statement)
     {
-        return static::unUsing($statement->getDb(), $statement->getSql());
-    }
-
-    /**
-     * 将连接中对应sql的statement设为可用
-     *
-     * @param IDb $db
-     * @param string $sql
-     * @return void
-     */
-    public static function unUsing(IDb $db, string $sql)
-    {
+        $db = $statement->getDb();
+        $sql = $statement->getSql();
         $hashCode = $db->hashCode();
         if(isset(static::$statements[$hashCode][$sql]))
         {
-            static::$statements[$hashCode][$sql]['using'] = false;
-            if(RequestContext::exists())
-            {
-                $statementCaches = RequestContext::get('statementCaches', []);
-                $i = array_search(static::$statements[$hashCode][$sql]['statement'], $statementCaches);
-                if(false !== $i)
+            $statementItem = &static::$statements[$hashCode][$sql];
+            $statementItem['statement']->closeCursor();
+            $statementItem['using'] = false;
+            try {
+                $context = RequestContext::getContext();
+                if(isset($context['statementCaches']))
                 {
-                    unset($statementCaches[$i]);
-                    RequestContext::set('statementCaches', $statementCaches);
+                    if(false !== $i = array_search($statementItem['statement'], $context['statementCaches']))
+                    {
+                        unset($context['statementCaches'][$i]);
+                    }
                 }
+            } catch(RequestContextException $e) {
+
             }
         }
     }
@@ -114,9 +142,26 @@ abstract class StatementManager
      */
     public static function unUsingAll(IDb $db)
     {
-        foreach(static::$statements[$db->hashCode()] as &$item)
+        try {
+            $context = RequestContext::getContext();
+            $statementCaches = $context['statementCaches'] ?? [];
+            $requestContext = true;
+        } catch(RequestContextException $e) {
+            $statementCaches = [];
+            $requestContext = false;
+        }
+        foreach(static::$statements[$db->hashCode()] ?? [] as &$item)
         {
+            if($requestContext && false !== $i = array_search($item['statement'], $statementCaches))
+            {
+                unset($statementCaches[$i]);
+            }
+            $item['statement']->closeCursor();
             $item['using'] = false;
+        }
+        if($requestContext)
+        {
+            $context['statementCaches'] = $statementCaches;
         }
     }
 
@@ -134,12 +179,14 @@ abstract class StatementManager
     /**
      * 移除连接中对应sql的statement
      *
-     * @param IDb $db
-     * @param string $sql
+     * @param IStatement $statement
      * @return void
      */
-    public static function remove(IDb $db, string $sql)
+    public static function remove(IStatement $statement)
     {
+        $db = $statement->getDb();
+        $sql = $statement->getSql();
+        static::unUsing($statement);
         $hashCode = $db->hashCode();
         if(isset(static::$statements[$hashCode][$sql]))
         {
@@ -155,7 +202,29 @@ abstract class StatementManager
      */
     public static function clear(IDb $db)
     {
-        static::$statements[$db->hashCode()] = [];
+        try {
+            $statementCaches = RequestContext::get('statementCaches', []);
+            $requestContext = true;
+        } catch(RequestContextException $e) {
+            $statementCaches = [];
+            $requestContext = false;
+        }
+        $statements = static::$statements[$db->hashCode()] ?? [];
+        foreach($statements as $item)
+        {
+            if($requestContext && false !== $i = array_search($item['statement'], $statementCaches))
+            {
+                unset($statementCaches[$i]);
+            }
+        }
+        if($requestContext)
+        {
+            RequestContext::set('statementCaches', $statementCaches);
+        }
+        if($statements)
+        {
+            unset(static::$statements[$db->hashCode()]);
+        }
     }
 
     /**
@@ -176,19 +245,10 @@ abstract class StatementManager
     public static function clearAll()
     {
         static::$statements = [];
-    }
+        try {
+            RequestContext::set('statementCaches', []);
+        } catch(RequestContextException $e) {
 
-    /**
-     * 释放请求上下文
-     *
-     * @return void
-     */
-    public static function destoryRequestContext()
-    {
-        $statementCaches = RequestContext::get('statementCaches', []);
-        foreach($statementCaches as $statement)
-        {
-            static::unUsingStatement($statement);
         }
     }
 

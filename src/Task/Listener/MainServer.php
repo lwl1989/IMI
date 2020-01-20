@@ -19,20 +19,21 @@ class MainServer implements ITaskEventListener
      */
     public function handle(TaskEventParam $e)
     {
-        RequestContext::create();
-        try{
-            $taskInfo = $e->data;
-            if($taskInfo instanceof TaskInfo)
-            {
-                $taskInfo->getTaskHandler()->handle($taskInfo->getParam(), $e->server->getSwooleServer(), $e->taskID, $e->workerID);
-            }
-        }
-        catch(\Throwable $ex)
+        $taskInfo = $e->data;
+        if($taskInfo instanceof TaskInfo)
         {
-            throw $ex;
-        }
-        finally{
-            RequestContext::destroy();
+            $result = $taskInfo->getTaskHandler()->handle($taskInfo->getParam(), $e->server->getSwooleServer(), $e->taskID, $e->workerID);
+            if($e->workerID >= 0 && $e->workerID < $e->server->getSwooleServer()->setting['worker_num'])
+            {
+                if($e->task)
+                {
+                    $e->task->finish($result);
+                }
+                else
+                {
+                    $e->server->getSwooleServer()->finish($result);
+                }
+            }
         }
     }
 }

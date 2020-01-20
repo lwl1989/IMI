@@ -49,31 +49,35 @@ abstract class ProcessPoolManager
         
         $pool = new \Swoole\Process\Pool($workerNum, $ipcType, $msgQueueKey);
 
-        $pool->on('WorkerStart', imiCallable(function ($pool, $workerId) use($name, $workerNum, $args, $ipcType, $msgQueueKey, $processPoolOption) {
+        $pool->on('WorkerStart', function ($pool, $workerId) use($name, $workerNum, $args, $ipcType, $msgQueueKey, $processPoolOption) {
             Imi::setProcessName('processPool', [
                 'processPoolName'   =>  $name,
                 'workerId'          =>  $workerId,
             ]);
+            // 强制开启进程协程化
+            \Swoole\Runtime::enableCoroutine(true);
             // 随机数播种
             mt_srand();
-            $processInstance = BeanFactory::newInstance($processPoolOption['className'], $args);
-            // 加载服务器注解
-            \Imi\Bean\Annotation::getInstance()->init(\Imi\Main\Helper::getAppMains());
-            App::initWorker();
-            // 进程开始事件
-            Event::trigger('IMI.PROCESS_POOL.PROCESS.BEGIN', [
-                'name'          => $name,
-                'pool'          => $pool,
-                'workerId'      => $workerId,
-                'workerNum'     => $workerNum,
-                'args'          => $args,
-                'ipcType'       => $ipcType,
-                'msgQueueKey'   => $msgQueueKey,
-            ]);
-            // 执行任务
-            $processInstance->run($pool, $workerId, $name, $workerNum, $args, $ipcType, $msgQueueKey);
-            swoole_event_wait();
-        }, true));
+            imigo(function() use($pool, $workerId, $name, $workerNum, $args, $ipcType, $msgQueueKey, $processPoolOption){
+                $processInstance = BeanFactory::newInstance($processPoolOption['className'], $args);
+                // 加载服务器注解
+                \Imi\Bean\Annotation::getInstance()->init(\Imi\Main\Helper::getAppMains());
+                App::initWorker();
+                // 进程开始事件
+                Event::trigger('IMI.PROCESS_POOL.PROCESS.BEGIN', [
+                    'name'          => $name,
+                    'pool'          => $pool,
+                    'workerId'      => $workerId,
+                    'workerNum'     => $workerNum,
+                    'args'          => $args,
+                    'ipcType'       => $ipcType,
+                    'msgQueueKey'   => $msgQueueKey,
+                ]);
+                // 执行任务
+                $processInstance->run($pool, $workerId, $name, $workerNum, $args, $ipcType, $msgQueueKey);
+            });
+            \Swoole\Event::wait();
+        });
         
         $pool->on('WorkerStop', imiCallable(function ($pool, $workerId) use($name, $workerNum, $args, $ipcType, $msgQueueKey) {
             // 进程结束事件

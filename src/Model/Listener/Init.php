@@ -14,9 +14,10 @@ use Imi\Util\MemoryTableManager;
 use Imi\Bean\Annotation\Listener;
 use Imi\Model\Annotation\MemoryTable;
 use Imi\Bean\Annotation\AnnotationManager;
+use Imi\Config;
 
 /**
- * @Listener(eventName="IMI.INITED", priority=1)
+ * @Listener(eventName="IMI.LOAD_RUNTIME_INFO")
  */
 class Init implements IEventListener
 {
@@ -27,22 +28,27 @@ class Init implements IEventListener
      */
     public function handle(EventParam $e)
     {
-        if('server' !== Tool::getToolName() || 'start' !== Tool::getToolOperation())
+        if('server' !== Tool::getToolName() || 'start' !== Tool::getToolOperation() || MemoryTableManager::isInited())
         {
             return;
         }
 
         $runtimeInfo = App::getRuntimeInfo();
 
-        // 初始化 MemoryTable
+        // 初始化内存表模型
         foreach($runtimeInfo->memoryTable as $item)
         {
-            $memoryTableAnnotation = $item['annotation'];
+            $memoryTableAnnotation = $item->getAnnotation();
             MemoryTableManager::addName($memoryTableAnnotation->name, [
                 'size'                  => $memoryTableAnnotation->size,
                 'conflictProportion'    => $memoryTableAnnotation->conflictProportion,
-                'columns'               => $item['columns'],
+                'columns'               => $item->columns,
             ]);
+        }
+        // 初始化配置中的内存表
+        foreach(Config::get('@app.memoryTable', []) as $name => $item)
+        {
+            MemoryTableManager::addName($name, $item);
         }
 
         MemoryTableManager::init();

@@ -19,13 +19,20 @@ class ErrorLog
     use TBeanRealClass;
 
     /**
+     * 错误级别
+     *
+     * @var integer
+     */
+    protected $level = 0;
+
+    /**
      * 注册错误监听
      *
      * @return void
      */
     public function register()
     {
-        error_reporting(0);
+        error_reporting($this->level);
         register_shutdown_function([$this, 'onShutdown']);
         set_error_handler([$this, 'onError']);
     }
@@ -41,6 +48,10 @@ class ErrorLog
      */
     public function onError($errno, $errstr, $errfile, $errline)
     {
+        if(error_reporting() & $errno)
+        {
+            throw new \ErrorException($errstr, 0, $errno, $errfile, $errline);
+        }
         switch($errno)
         {
             case E_ERROR:
@@ -83,7 +94,7 @@ class ErrorLog
     {
         try {
             $e = error_get_last();
-            if (in_array($e['type'], [
+            if ($e && in_array($e['type'], [
                 E_ERROR,
                 E_PARSE,
                 E_CORE_ERROR,
@@ -110,14 +121,28 @@ class ErrorLog
      *
      * @return void
      */
-    public function onException(\Throwable $ex)
+    public function onException(\Throwable $th)
     {
-        // 日志处理
-        Log::error($ex->getMessage(), [
-            'trace'     => $ex->getTrace(),
-            'errorFile' => $ex->getFile(),
-            'errorLine' => $ex->getLine(),
-        ]);
+        // 支持记录无限级上级日志
+        $throwables = [$th];
+        $prev = $th;
+        do {
+            $prev = $prev->getPrevious();
+            if($prev)
+            {
+                $throwables[] = $prev;
+            }
+        } while($prev);
+        $throwables = array_reverse($throwables);
+        foreach($throwables as $throwable)
+        {
+            // 日志处理
+            Log::error($throwable->getMessage(), [
+                'trace'     => $throwable->getTrace(),
+                'errorFile' => $throwable->getFile(),
+                'errorLine' => $throwable->getLine(),
+            ]);
+        }
     }
 
     /**

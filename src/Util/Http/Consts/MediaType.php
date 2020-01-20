@@ -14,7 +14,7 @@ abstract class MediaType
 
     const APPLICATION_JSON = 'application/json';
 
-    const APPLICATION_JSON_UTF8 = 'application/json;charset=UTF-8';
+    const APPLICATION_JSON_UTF8 = 'application/json;charset=utf-8';
 
     const APPLICATION_OCTET_STREAM = 'application/octet-stream';
 
@@ -41,6 +41,8 @@ abstract class MediaType
     const IMAGE_GIF = 'image/gif';
     
     const IMAGE_WEBP = 'image/webp';
+
+    const IMAGE_ICON = 'image/x-icon';
     
     const MULTIPART_FORM_DATA = 'multipart/form-data';
     
@@ -53,4 +55,11 @@ abstract class MediaType
     const TEXT_PLAIN = 'text/plain';
     
     const TEXT_XML = 'text/xml';
+
+    const GRPC = 'application/grpc';
+
+    const GRPC_PROTO = 'application/grpc+proto';
+
+    const GRPC_JSON = 'application/grpc+json';
+
 }

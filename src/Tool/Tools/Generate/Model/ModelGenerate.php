@@ -30,9 +30,11 @@ class ModelGenerate
      * @Arg(name="exclude", type=ArgType::ARRAY, default={}, comments="要排除的表名，以半角逗号分隔")
      * @Arg(name="override", type=ArgType::STRING, default=false, comments="是否覆盖已存在的文件，请慎重！true-全覆盖;false-不覆盖;base-覆盖基类;model-覆盖模型类;默认缺省状态为false")
      * @Arg(name="config", type=ArgType::STRING, default=true, comments="配置文件。true-项目配置；false-忽略配置；php配置文件名-使用该配置文件。默认为true")
+     * @Arg(name="basePath", type=ArgType::STRING, default=null, comments="指定命名空间对应的基准路径，可选")
+     * @Arg(name="entity", type=ArgType::BOOLEAN, default=true, comments="序列化时是否使用驼峰命名(true or false),默认true,可选")
      * @return void
      */
-    public function generate($namespace, $database, $poolName, $prefix, $include, $exclude, $override, $config)
+    public function generate($namespace, $database, $poolName, $prefix, $include, $exclude, $override, $config, $basePath, $entity)
     {
         $override = (string)$override;
         switch($override)
@@ -69,21 +71,29 @@ class ModelGenerate
         }
         // 表
         $list = $query->tableRaw('information_schema.TABLES')
-                        ->where('TABLE_SCHEMA', '=', $database)
-                        ->whereIn('TABLE_TYPE', [
-                            'BASE TABLE',
-                            'VIEW',
-                        ])
-                        ->field('TABLE_NAME', 'TABLE_TYPE')
-                        ->select()
-                        ->getArray();
+                      ->where('TABLE_SCHEMA', '=', $database)
+                      ->whereIn('TABLE_TYPE', [
+                          'BASE TABLE',
+                          'VIEW',
+                      ])
+                      ->field('TABLE_NAME', 'TABLE_TYPE')
+                      ->select()
+                      ->getArray();
         // model保存路径
-        $modelPath = Imi::getNamespacePath($namespace);
+        if(null === $basePath)
+        {
+            $modelPath = Imi::getNamespacePath($namespace);
+        }
+        else
+        {
+            $modelPath = $basePath;
+        }
         if(null === $modelPath)
         {
             echo 'Namespace ', $namespace, ' cannot found', PHP_EOL;
             exit;
         }
+        echo 'modelPath: ', $modelPath, PHP_EOL;
         File::createDir($modelPath);
         $baseModelPath = $modelPath . '/Base';
         File::createDir($baseModelPath);
@@ -131,10 +141,11 @@ class ModelGenerate
                     'id'    => [],
                 ],
                 'fields'    => [],
+                'entity'    => $entity,
             ];
             $fields = $query->bindValue(':table', $table)->execute(sprintf('show full columns from `%s`' , $table))->getArray();
             $this->parseFields($fields, $data, 'VIEW' === $item['TABLE_TYPE']);
-            
+
             $baseFileName = File::path($basePath, $className . 'Base.php');
             if(!is_file($baseFileName) || true === $override || 'base' === $override)
             {
@@ -228,6 +239,7 @@ class ModelGenerate
             }
         }
     }
+
     /**
      * 处理类似varchar(32)和decimal(10,2)格式的字段类型
      * @param string $text

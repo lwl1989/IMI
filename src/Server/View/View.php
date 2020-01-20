@@ -35,34 +35,42 @@ class View
      */
     protected $data = [];
 
-    public function render(ViewAnnotation $view, Response $response = null): Response
+    /**
+     * 视图处理器对象列表
+     *
+     * @var \Imi\Server\View\Handler\IHandler[]
+     */
+    protected $handlers;
+
+    public function __init()
     {
-        if(is_array($view->data))
+        foreach([$this->coreHandlers, $this->exHandlers] as $list)
         {
-            $view->data = array_merge($this->data, $view->data);
+            foreach($list as $name => $class)
+            {
+                $this->handlers[$name] = RequestContext::getServerBean($class);
+            }
         }
-        if(null === $response)
+    }
+
+    public function render($renderType, $data, $options, Response $response = null): Response
+    {
+        if(isset($this->handlers[$renderType]))
         {
-            $response = RequestContext::get('response');
-        }
-        if(isset($this->exHandlers[$view->renderType]))
-        {
-            return $this->handle($this->exHandlers[$view->renderType], $view, $response);
-        }
-        else if(isset($this->coreHandlers[$view->renderType]))
-        {
-            return $this->handle($this->coreHandlers[$view->renderType], $view, $response);
+            if($this->data && is_array($data))
+            {
+                $data = array_merge($this->data, $data);
+            }
+            if(null === $response)
+            {
+                $response = RequestContext::get('response');
+            }
+            return $this->handlers[$renderType]->handle($data, $options, $response);
         }
         else
         {
-            throw new \RuntimeException('Unsupport View renderType: ' . $view->renderType);
+            throw new \RuntimeException('Unsupport View renderType: ' . $renderType);
         }
-        return $response;
     }
 
-    protected function handle($handlerClass, ViewAnnotation $view, Response $response = null): Response
-    {
-        $handler = RequestContext::getServerBean($handlerClass);
-        return $handler->handle($view, $response);
-    }
 }

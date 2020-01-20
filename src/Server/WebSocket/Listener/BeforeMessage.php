@@ -13,7 +13,7 @@ use Imi\Server\Event\Listener\IMessageEventListener;
 
 /**
  * Message事件前置处理
- * @ClassEventListener(className="Imi\Server\WebSocket\Server",eventName="message",priority=PHP_INT_MAX)
+ * @ClassEventListener(className="Imi\Server\WebSocket\Server",eventName="message",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class BeforeMessage implements IMessageEventListener
 {
@@ -26,13 +26,15 @@ class BeforeMessage implements IMessageEventListener
     {
         if(!Worker::isWorkerStartAppComplete())
         {
-            $GLOBALS['WORKER_START_END_RESUME_COIDS'][] = Coroutine::getuid();
-            Coroutine::suspend();
+            $e->server->getSwooleServer()->close($e->frame->fd);
+            $e->stopPropagation();
+            return;
         }
         // 上下文创建
-        RequestContext::create();
-        RequestContext::set('fd', $e->frame->fd);
-        RequestContext::set('server', $e->getTarget());
+        RequestContext::muiltiSet([
+            'fd'        =>  $e->frame->fd,
+            'server'    =>  $e->getTarget(),
+        ]);
 
         // 中间件
         $dispatcher = RequestContext::getServerBean('WebSocketDispatcher');

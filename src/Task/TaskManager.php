@@ -37,7 +37,7 @@ abstract class TaskManager
     }
 
     /**
-     * 投递任务，阻塞等待，单位：秒
+     * 投递任务，协程挂起等待，单位：秒
      * 返回值为任务直接结果
      * @param TaskInfo $taskInfo
      * @param float $timeout
@@ -53,7 +53,7 @@ abstract class TaskManager
     }
 
     /**
-     * 使用任务名称投递任务，阻塞等待，单位：秒
+     * 使用任务名称投递任务，协程挂起等待，单位：秒
      * 返回值为任务直接结果
      * 
      * @param string $name
@@ -99,6 +99,19 @@ abstract class TaskManager
             $tasks[$i]->getTaskHandler()->finish($server, -1, $item);
         }
         return $result;
+    }
+
+    /**
+     * 获取 TaskInfo
+     *
+     * @param string $name
+     * @return TaskInfo
+     */
+    public static function getTaskInfo(string $name, $data): TaskInfo
+    {
+        $task = TaskParser::getInstance()->getTask($name);
+        $paramClass = $task['Task']->paramClass;
+        return new TaskInfo(new $task['className'], new $paramClass($data));
     }
 
 }

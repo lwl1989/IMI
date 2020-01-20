@@ -1,14 +1,17 @@
 <?php
 namespace Imi\Server\Group\Handler;
 
+use Imi\App;
+use Imi\Worker;
+use Imi\Log\Log;
+use Imi\Event\Event;
 use Imi\Util\Swoole;
+use Imi\ServerManage;
 use Imi\RequestContext;
 use Imi\Util\ArrayUtil;
 use Imi\Pool\PoolManager;
+use Imi\Util\AtomicManager;
 use Imi\Bean\Annotation\Bean;
-use Imi\Worker;
-use Imi\Log\Log;
-use Imi\ServerManage;
 
 /**
  * @Bean("GroupRedis")
@@ -48,7 +51,7 @@ class Redis implements IGroupHandler
      * 
      * @var string
      */
-    protected $key = 'imi:connect_group';
+    protected $key;
 
     /**
      * 心跳Timer的ID
@@ -72,11 +75,16 @@ class Redis implements IGroupHandler
 
     public function __init()
     {
+        if(null === $this->key)
+        {
+            $this->key = 'imi:' . App::getNamespace() . ':connect_group';
+        }
         if(null === $this->redisPool)
         {
             return;
         }
-        if(0 === Worker::getWorkerID())
+        $workerId = Worker::getWorkerID();
+        if(0 === $workerId)
         {
             $this->useRedis(function($resource, $redis){
                 // 判断master进程pid
@@ -110,6 +118,11 @@ class Redis implements IGroupHandler
                 }
                 $this->startPing($redis);
             });
+            AtomicManager::wakeup('imi.GroupRedisLock', Worker::getWorkerNum());
+        }
+        else if($workerId > 0)
+        {
+            AtomicManager::wait('imi.GroupRedisLock');
         }
     }
 
@@ -169,7 +182,11 @@ class Redis implements IGroupHandler
         if($this->ping($redis))
         {
             // 心跳定时器
-            $this->timerID = \swoole_timer_tick($this->heartbeatTimespan * 1000, [$this, 'pingTimer']);
+            $this->timerID = \Swoole\Timer::tick($this->heartbeatTimespan * 1000, [$this, 'pingTimer']);
+            Event::on('IMI.MAIN_SERVER.WORKER.EXIT', function(){
+                \Swoole\Timer::clear($this->timerID);
+                $this->timerID = null;
+            }, \Imi\Util\ImiPriority::IMI_MIN);
         }
     }
 
@@ -238,7 +255,7 @@ class Redis implements IGroupHandler
     {
         if(null !== $this->timerID)
         {
-            \swoole_timer_clear($this->timerID);
+            \Swoole\Timer::clear($this->timerID);
         }
     }
 

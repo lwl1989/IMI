@@ -20,7 +20,7 @@ class Server extends Base
     protected function createServer()
     {
         $config = $this->getServerInitConfig();
-        $this->swooleServer = new \swoole_server($config['host'], $config['port'], $config['mode'], $config['sockType']);
+        $this->swooleServer = new \Swoole\Server($config['host'], $config['port'], $config['mode'], $config['sockType']);
     }
 
     /**
@@ -57,19 +57,22 @@ class Server extends Base
     {
         $server = $this->swoolePort ?? $this->swooleServer;
 
-        $server->on('packet', function(\swoole_server $server, $data, $clientInfo){
-            try{
-                $this->trigger('packet', [
-                    'server'        => $this,
-                    'data'          => $data,
-                    'clientInfo'    => $clientInfo,
-                ], $this, PacketEventParam::class);
-            }
-            catch(\Throwable $ex)
-            {
-                App::getBean('ErrorLog')->onException($ex);
-            }
-        });
+        if($event = ($this->config['events']['packet'] ?? true))
+        {
+            $server->on('packet', is_callable($event) ? $event : function(\Swoole\Server $server, $data, $clientInfo){
+                try{
+                    $this->trigger('packet', [
+                        'server'        => $this,
+                        'data'          => $data,
+                        'clientInfo'    => $clientInfo,
+                    ], $this, PacketEventParam::class);
+                }
+                catch(\Throwable $ex)
+                {
+                    App::getBean('ErrorLog')->onException($ex);
+                }
+            });
+        }
         
     }
 }

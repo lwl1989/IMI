@@ -1,68 +1,66 @@
 <?php
 namespace Imi;
 
-use Imi\Util\Coroutine;
-use Imi\Server\Base;
-use Imi\Bean\Container;
 use Imi\Event\Event;
+use Imi\Bean\Container;
+use Imi\Util\Coroutine;
 
 abstract class RequestContext
 {
+    /**
+     * 上下文集合
+     *
+     * @var array
+     */
     private static $context = [];
 
     /**
-     * 为当前请求创建上下文
-     * @return void
+     * 为当前请求创建上下文，返回当前协程ID
+     * 
+     * @param array $data
+     * @return int
+     * @deprecated 1.0.17
      */
-    public static function create()
+    public static function create(array $data = [])
     {
-        $coID = Coroutine::getuid();
-        if(!isset(static::$context[$coID]))
-        {
-            static::$context[$coID] = [];
-            Event::trigger('IMI.REQUEST_CONTENT.CREATE');
-        }
-        else
-        {
-            throw new \RuntimeException('Create context failed, cannot create a duplicate context');
-        }
+        return Coroutine::getuid();
     }
 
     /**
      * 销毁当前请求的上下文
      * @return void
+     * @deprecated 1.0.17
      */
     public static function destroy()
     {
-        $coID = Coroutine::getuid();
-        if(isset(static::$context[$coID]))
-        {
-            Event::trigger('IMI.REQUEST_CONTENT.DESTROY');
-            unset(static::$context[$coID]);
-        }
-        else
-        {
-            throw new \RuntimeException('Destroy context failed, current context is not found');
-        }
-    }
-
-    /**
-     * 判断当前请求上下文是否存在
-     * @deprecated 1.0
-     * @return boolean
-     */
-    public static function exsits()
-    {
-        return static::exists();
     }
 
     /**
      * 判断当前请求上下文是否存在
      * @return boolean
+     * @deprecated 1.0.17
      */
     public static function exists()
     {
-        return isset(static::$context[Coroutine::getuid()]);
+        return true;
+    }
+    
+    /**
+     * 销毁当前请求的上下文
+     * @return void
+     */
+    private static function __destroy()
+    {
+        Event::trigger('IMI.REQUEST_CONTENT.DESTROY');
+        $context = Coroutine::getContext();
+        if(!$context)
+        {
+            $coId = Coroutine::getuid();
+            if(isset(static::$context[$coId]))
+            {
+                unset(static::$context[$coId]);
+            }
+        }
     }
 
     /**
@@ -73,19 +71,12 @@ abstract class RequestContext
      */
     public static function get($name, $default = null)
     {
-        $coID = Coroutine::getuid();
-        if(!isset(static::$context[$coID]))
+        $context = Coroutine::getContext();
+        if($context)
         {
-            throw new \RuntimeException('get context data failed, current context is not found');
+            return $context[$name] ?? $default;
         }
-        if(isset(static::$context[$coID][$name]))
-        {
-            return static::$context[$coID][$name];
-        }
-        else
-        {
-            return $default;
-        }
+        return static::$context[Coroutine::getuid()][$name] ?? $default;
     }
 
     /**
@@ -96,26 +87,114 @@ abstract class RequestContext
      */
     public static function set($name, $value)
     {
-        $coID = Coroutine::getuid();
-        if(!isset(static::$context[$coID]))
+        $context = Coroutine::getContext();
+        if($context)
         {
-            throw new \RuntimeException('set context data failed, current context is not found');
+            if(!($context['__bindDestroy'] ?? false))
+            {
+                $context['__bindDestroy'] = true;
+                defer('static::__destroy');
+            }
         }
-        static::$context[$coID][$name] = $value;
+        else
+        {
+            $coId = Coroutine::getuid();
+            if(!isset(static::$context[$coId]))
+            {
+                static::$context[$coId] = [];
+            }
+            $context = &static::$context[$coId];
+        }
+        $context[$name] = $value;
+    }
+
+    /**
+     * 批量设置上下文数据
+     *
+     * @param array $data
+     * @return void
+     */
+    public static function muiltiSet(array $data)
+    {
+        $context = Coroutine::getContext();
+        if($context)
+        {
+            if(!($context['__bindDestroy'] ?? false))
+            {
+                $context['__bindDestroy'] = true;
+                defer('static::__destroy');
+            }
+        }
+        else
+        {
+            $coId = Coroutine::getuid();
+            if(!isset(static::$context[$coId]))
+            {
+                static::$context[$coId] = [];
+            }
+            $context = &static::$context[$coId];
+        }
+        foreach($data as $k => $v)
+        {
+            $context[$k] = $v;
+        }
+    }
+
+    /**
+     * 使用回调来使用当前请求上下文数据
+     *
+     * @param callable $callback
+     * @return mixed
+     */
+    public static function use(callable $callback)
+    {
+        $context = Coroutine::getContext();
+        if($context)
+        {
+            if(!($context['__bindDestroy'] ?? false))
+            {
+                $context['__bindDestroy'] = true;
+                defer('static::__destroy');
+            }
+        }
+        else
+        {
+            $coId = Coroutine::getuid();
+            if(!isset(static::$context[$coId]))
+            {
+                static::$context[$coId] = [];
+            }
+            $context = &static::$context[$coId];
+        }
+        $result = $callback($context);
+        return $result;
     }
 
     /**
      * 获取当前上下文
      * @return array
      */
-    public static function getContext()
+    public static function &getContext()
     {
-        $coID = Coroutine::getuid();
-        if(!isset(static::$context[$coID]))
+        $context = Coroutine::getContext();
+        if($context)
         {
-            throw new \RuntimeException('get context failed, current context is not found');
+            if(!($context['__bindDestroy'] ?? false))
+            {
+                $context['__bindDestroy'] = true;
+                defer('static::__destroy');
+            }
         }
-        return static::$context[$coID];
+        else
+        {
+            $coId = Coroutine::getuid();
+            if(!isset(static::$context[$coId]))
+            {
+                static::$context[$coId] = [];
+            }
+            $context = &static::$context[$coId];
+        }
+        return $context;
     }
 
     /**
@@ -134,7 +213,7 @@ abstract class RequestContext
      */
     public static function getServerBean($name, ...$params)
     {
-        return static::getServer()->getBean($name, ...$params);
+        return static::get('server')->getBean($name, ...$params);
     }
 
     /**
@@ -144,11 +223,22 @@ abstract class RequestContext
      */
     public static function getBean($name, ...$params)
     {
-        $container = static::get('container');
-        if(null === $container)
+        $context = static::getContext();
+        if(isset($context['container']))
         {
-            $container = new Container;
-            static::set('container', $container);
+            $container = $context['container'];
+        }
+        else
+        {
+            if(isset($context['server']))
+            {
+                $container = $context['server']->getContainer()->newSubContainer();
+            }
+            else
+            {
+                $container = App::getContainer()->newSubContainer();
+            }
+            $context['container'] = $container;
         }
         return $container->get($name, ...$params);
     }

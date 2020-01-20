@@ -7,6 +7,7 @@ use Imi\Db\Consts\LogicalOperator;
 use Imi\Db\Query\Interfaces\IHaving;
 use Imi\Db\Query\Interfaces\IResult;
 use Imi\Db\Query\Interfaces\IBaseWhere;
+use Imi\Db\Query\Interfaces\IPaginateResult;
 
 /**
  * 查询器接口
@@ -454,6 +455,15 @@ interface IQuery
     public function select(): IResult;
 
     /**
+     * 分页查询
+     *
+     * @param boolean $status 设置为true时，查询结果会返回为分页格式
+     * @param array $options
+     * @return \Imi\Db\Query\Interfaces\IPaginateResult
+     */
+    public function paginate($page, $count, $options = []): IPaginateResult;
+
+    /**
      * 插入数据
      * @param array $data
      * @return IResult
@@ -583,5 +593,20 @@ interface IQuery
      * @return static
      */
     public function setFieldDec($fieldName, float $decValue = 1);
+
+    /**
+     * 获取自动起名的参数名称
+     * @return string
+     */
+    public function getAutoParamName();
+
+    /**
+     * 查询器别名
+     *
+     * @param string $name
+     * @param callable $callable
+     * @return static
+     */
+    public function alias($name, $callable);
 
 }

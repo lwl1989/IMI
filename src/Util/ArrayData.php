@@ -4,7 +4,7 @@ namespace Imi\Util;
 /**
  * 数组数据基类
  */
-class ArrayData implements \ArrayAccess
+class ArrayData implements \ArrayAccess, \Countable
 {
     /**
      * 数据
@@ -35,6 +35,7 @@ class ArrayData implements \ArrayAccess
         }
         return true;
     }
+
     /**
      * 设置数据
      * @param string $name            
@@ -43,12 +44,11 @@ class ArrayData implements \ArrayAccess
      */
     public function setVal($name, $value = null)
     {
-        $type = gettype($name);
-        if('string' === $type)
+        if(is_string($name))
         {
             $name = explode('.', $name);
         }
-        else if('array' !== $type)
+        else if(!is_array($name))
         {
             return false;
         }
@@ -65,6 +65,7 @@ class ArrayData implements \ArrayAccess
         $data[$last] = $value;
         return true;
     }
+
     /**
      * 获取数据
      * @param string $name            
@@ -77,20 +78,18 @@ class ArrayData implements \ArrayAccess
         {
             return $this->data;
         }
-        $type = gettype($name);
-        if('string' === $type)
+        if(is_string($name))
         {
             $name = explode('.', $name);
         }
-        else if('array' !== $type)
+        else if(!is_array($name))
         {
             return $default;
         }
         $result = &$this->data;
         foreach ($name as $value)
         {
-            $type = gettype($result);
-            if('array' === $type)
+            if(is_array($result))
             {
                 // 数组
                 if (isset($result[$value]))
@@ -102,7 +101,7 @@ class ArrayData implements \ArrayAccess
                     return $default;
                 }
             }
-            else if('object' === $type)
+            else if(is_object($result))
             {
                 // 对象
                 if (property_exists($result, $value))
@@ -119,7 +118,7 @@ class ArrayData implements \ArrayAccess
                 return $default;
             }
         }
-        if (count($name) > 0)
+        if (isset($value))
         {
             return $result;
         }
@@ -128,6 +127,7 @@ class ArrayData implements \ArrayAccess
             return $default;
         }
     }
+
     /**
      * 删除数据
      * @param string $name            
@@ -140,12 +140,11 @@ class ArrayData implements \ArrayAccess
         }
         foreach($name as $val)
         {
-            $type = gettype($val);
-            if('string' === $type)
+            if(is_string($val))
             {
                 $val = explode('.', $val);
             }
-            else if('array' !== $type)
+            else if(!is_array($val))
             {
                 return false;
             }
@@ -162,6 +161,7 @@ class ArrayData implements \ArrayAccess
         }
         return true;
     }
+
     /**
      * 清空数据
      */
@@ -169,6 +169,7 @@ class ArrayData implements \ArrayAccess
     {
         $this->data = array ();
     }
+
     /**
      * 获取数据的数量
      * @return int
@@ -177,6 +178,17 @@ class ArrayData implements \ArrayAccess
     {
         return count($this->data);
     }
+
+    /**
+     * 获取数据的数量
+     *
+     * @return int
+     */
+    public function count()
+    {
+        return count($this->data);
+    }
+
     /**
      * 键名对应的值是否存在
      * @param string $name            
@@ -192,9 +204,9 @@ class ArrayData implements \ArrayAccess
         return $this->get($key);
     }
     
-    public function __set($key,$value)
+    public function __set($key, $value)
     {
-        $this->set($key,$value);
+        $this->set($key, $value);
     }
     
     public function __isset ($key)
@@ -207,7 +219,7 @@ class ArrayData implements \ArrayAccess
         $this->remove($key);
     }
     
-    public function offsetSet($offset,$value)
+    public function offsetSet($offset, $value)
     {
         if (is_null($offset))
         {
@@ -215,7 +227,7 @@ class ArrayData implements \ArrayAccess
         }
         else
         {
-            $this->setVal($offset,$value);
+            $this->setVal($offset, $value);
         }
     }
     

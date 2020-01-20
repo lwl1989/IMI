@@ -2,10 +2,12 @@
 namespace Imi\Bean;
 
 use Imi\Bean\Parser\BaseParser;
-use Doctrine\Common\Annotations\AnnotationReader;
-use Doctrine\Common\Annotations\AnnotationRegistry;
+use Yurun\Doctrine\Common\Annotations\AnnotationReader;
+use Yurun\Doctrine\Common\Annotations\AnnotationRegistry;
 use Imi\Event\TEvent;
 use Imi\Bean\Annotation\AnnotationManager;
+use Imi\Bean\Annotation\Inherit;
+use Imi\Util\ClassObject;
 use Imi\Util\Imi;
 
 /**
@@ -16,10 +18,10 @@ class AnnotationParser
     use TEvent;
 
     /**
-     * 处理后的数据
-     * @var array
+     * 类名列表
+     * @var string[]
      */
-    private $data = [];
+    private $classes = [];
 
     /**
      * 处理器类名映射
@@ -28,15 +30,15 @@ class AnnotationParser
     private $parsers = [];
 
     /**
-     * 文件数据映射
+     * 文件映射
      *
      * @var array
      */
-    private $fileMap = [];
+    private $files = [];
 
     /**
      * 注解读取器
-     * @var \Doctrine\Common\Annotations\AnnotationReader
+     * @var \Yurun\Doctrine\Common\Annotations\AnnotationReader
      */
     private $reader;
 
@@ -66,7 +68,7 @@ class AnnotationParser
         $this->parseConsts($ref);
 
         // 处理注解的处理器
-        $this->parseAnnotationParsers($className);
+        $this->parseAnnotationParsers($ref);
 
     }
 
@@ -87,15 +89,73 @@ class AnnotationParser
     public function parseClass(\ReflectionClass $ref)
     {
         $annotations = $this->reader->getClassAnnotations($ref);
+        foreach($annotations as $i => $annotation)
+        {
+            if(!$annotation instanceof \Imi\Bean\Annotation\Base)
+            {
+                unset($annotations[$i]);
+            }
+        }
+        $className = $ref->getName();
         if($this->checkAnnotations($annotations))
         {
-            $this->data[$ref->getName()]['class'] = $this->fileMap[$ref->getFileName()][$ref->getName()]['class'] = &$annotations;
+            $this->classes[$className] = $ref->getFileName();
+            $this->files[$ref->getFileName()] = 1;
+            
+            // @Inherit 注解继承父级的注解
+            $hasInherit = false;
+            foreach($annotations as $annotation)
+            {
+                if($annotation instanceof Inherit)
+                {
+                    $hasInherit = true;
+                    break;
+                }
+            }
+            if($hasInherit && $parentClass = $ref->getParentClass())
+            {
+                $parentClassName = $parentClass->getName();
+                if(!isset($this->classes[$parentClassName]))
+                {
+                    $this->parse($parentClassName);
+                    $this->execParse($parentClassName);
+                }
+                if(is_string($annotation->annotation))
+                {
+                    $inheritAnnotationClasses = [$annotation->annotation];
+                }
+                else
+                {
+                    $inheritAnnotationClasses = $annotation->annotation;
+                }
+                $inheritAnnotations = [];
+                foreach(AnnotationManager::getClassAnnotations($parentClassName) as $annotation)
+                {
+                    if(null === $inheritAnnotationClasses)
+                    {
+                        $inheritAnnotations[] = $annotation;
+                    }
+                    else
+                    {
+                        foreach($inheritAnnotationClasses as $inheritAnnotationClass)
+                        {
+                            if($annotation instanceof $inheritAnnotationClass)
+                            {
+                                $inheritAnnotations[] = $annotation;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
         // 是注解类的情况下，Parser类不需要指定@Parser()处理器
-        else if($ref->isSubclassOf('Imi\Bean\Annotation\Base') && $ref->getName() !== 'Imi\Bean\Annotation\Parser')
+        else if($ref->isSubclassOf('Imi\Bean\Annotation\Base') && $className !== 'Imi\Bean\Annotation\Parser')
         {
-            throw new \RuntimeException(sprintf('Annotation %s has no @Parser()', $ref->getName()));
+            throw new \RuntimeException(sprintf('Annotation %s has no @Parser()', $className));
         }
+
+        AnnotationManager::setClassAnnotations($className, ...$annotations, ...$inheritAnnotations ?? []);
     }
 
     /**
@@ -119,11 +179,71 @@ class AnnotationParser
      */
     public function parseMethod(\ReflectionClass $ref, \ReflectionMethod $method)
     {
+        $className = $ref->getName();
+        $methodName = $method->getName();
         $annotations = $this->reader->getMethodAnnotations($method);
+        foreach($annotations as $i => $annotation)
+        {
+            if(!$annotation instanceof \Imi\Bean\Annotation\Base)
+            {
+                unset($annotations[$i]);
+            }
+        }
+
         if($this->checkAnnotations($annotations))
         {
-            $this->data[$ref->getName()]['method'][$method->getName()] = $this->fileMap[$ref->getFileName()][$ref->getName()]['method'][$method->getName()] = &$annotations;
+            $this->classes[$className] = $ref->getFileName();
+            $this->files[$ref->getFileName()] = 1;
+
+            // @Inherit 注解继承父级的注解
+            $hasInherit = false;
+            foreach($annotations as $annotation)
+            {
+                if($annotation instanceof Inherit)
+                {
+                    $hasInherit = true;
+                    break;
+                }
+            }
+            if($hasInherit && $parentClass = $ref->getParentClass())
+            {
+                $parentClassName = $parentClass->getName();
+                if(!isset($this->classes[$parentClassName]))
+                {
+                    $this->parse($parentClassName);
+                    $this->execParse($parentClassName);
+                }
+                if(is_string($annotation->annotation))
+                {
+                    $inheritAnnotationClasses = [$annotation->annotation];
+                }
+                else
+                {
+                    $inheritAnnotationClasses = $annotation->annotation;
+                }
+                $inheritAnnotations = [];
+                foreach(AnnotationManager::getMethodAnnotations($parentClassName, $methodName) as $annotation)
+                {
+                    if(null === $inheritAnnotationClasses)
+                    {
+                        $inheritAnnotations[] = $annotation;
+                    }
+                    else
+                    {
+                        foreach($inheritAnnotationClasses as $inheritAnnotationClass)
+                        {
+                            if($annotation instanceof $inheritAnnotationClass)
+                            {
+                                $inheritAnnotations[] = $annotation;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        AnnotationManager::setMethodAnnotations($className, $methodName, ...$annotations, ...$inheritAnnotations ?? []);
     }
 
     /**
@@ -148,10 +268,69 @@ class AnnotationParser
     public function parseProp(\ReflectionClass $ref, \ReflectionProperty $prop)
     {
         $annotations = $this->reader->getPropertyAnnotations($prop);
+        foreach($annotations as $i => $annotation)
+        {
+            if(!$annotation instanceof \Imi\Bean\Annotation\Base)
+            {
+                unset($annotations[$i]);
+            }
+        }
+        $className = $ref->getName();
+        $propertyName = $prop->getName();
         if($this->checkAnnotations($annotations))
         {
-            $this->data[$ref->getName()]['prop'][$prop->getName()] = $this->fileMap[$ref->getFileName()][$ref->getName()]['prop'][$prop->getName()] = &$annotations;
+            $this->classes[$className] = $ref->getFileName();
+            $this->files[$ref->getFileName()] = 1;
+
+            // @Inherit 注解继承父级的注解
+            $hasInherit = false;
+            foreach($annotations as $annotation)
+            {
+                if($annotation instanceof Inherit)
+                {
+                    $hasInherit = true;
+                    break;
+                }
+            }
+            if($hasInherit && $parentClass = $ref->getParentClass())
+            {
+                $parentClassName = $parentClass->getName();
+                if(!isset($this->classes[$parentClassName]))
+                {
+                    $this->parse($parentClassName);
+                    $this->execParse($parentClassName);
+                }
+                if(is_string($annotation->annotation))
+                {
+                    $inheritAnnotationClasses = [$annotation->annotation];
+                }
+                else
+                {
+                    $inheritAnnotationClasses = $annotation->annotation;
+                }
+                $inheritAnnotations = [];
+                foreach(AnnotationManager::getPropertyAnnotations($parentClassName, $propertyName) as $annotation)
+                {
+                    if(null === $inheritAnnotationClasses)
+                    {
+                        $inheritAnnotations[] = $annotation;
+                    }
+                    else
+                    {
+                        foreach($inheritAnnotationClasses as $inheritAnnotationClass)
+                        {
+                            if($annotation instanceof $inheritAnnotationClass)
+                            {
+                                $inheritAnnotations[] = $annotation;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        AnnotationManager::setPropertyAnnotations($className, $propertyName, ...$annotations, ...$inheritAnnotations ?? []);
     }
 
     /**
@@ -178,10 +357,69 @@ class AnnotationParser
     public function parseConst(\ReflectionClass $ref, \ReflectionClassConstant $const)
     {
         $annotations = $this->reader->getConstantAnnotations($const);
+        foreach($annotations as $i => $annotation)
+        {
+            if(!$annotation instanceof \Imi\Bean\Annotation\Base)
+            {
+                unset($annotations[$i]);
+            }
+        }
+        $className = $ref->getName();
+        $constName = $const->getName();
         if($this->checkAnnotations($annotations))
         {
-            $this->data[$ref->getName()]['const'][$const->getName()] = $this->fileMap[$ref->getFileName()][$ref->getName()]['const'][$const->getName()] = &$annotations;
+            $this->classes[$className] = $ref->getFileName();
+            $this->files[$ref->getFileName()] = 1;
+            
+            // @Inherit 注解继承父级的注解
+            $hasInherit = false;
+            foreach($annotations as $annotation)
+            {
+                if($annotation instanceof Inherit)
+                {
+                    $hasInherit = true;
+                    break;
+                }
+            }
+            if($hasInherit && $parentClass = $ref->getParentClass())
+            {
+                $parentClassName = $parentClass->getName();
+                if(!isset($this->classes[$parentClassName]))
+                {
+                    $this->parse($parentClassName);
+                    $this->execParse($parentClassName);
+                }
+                if(is_string($annotation->annotation))
+                {
+                    $inheritAnnotationClasses = [$annotation->annotation];
+                }
+                else
+                {
+                    $inheritAnnotationClasses = $annotation->annotation;
+                }
+                $inheritAnnotations = [];
+                foreach(AnnotationManager::getConstantAnnotations($parentClassName, $constName) as $annotation)
+                {
+                    if(null === $inheritAnnotationClasses)
+                    {
+                        $inheritAnnotations[] = $annotation;
+                    }
+                    else
+                    {
+                        foreach($inheritAnnotationClasses as $inheritAnnotationClass)
+                        {
+                            if($annotation instanceof $inheritAnnotationClass)
+                            {
+                                $inheritAnnotations[] = $annotation;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        AnnotationManager::setConstantAnnotations($className, $constName, ...$annotations, ...$inheritAnnotations ?? []);
     }
 
     /**
@@ -191,30 +429,31 @@ class AnnotationParser
      */
     private function checkAnnotations($annotations)
     {
-        return isset($annotations[0]);
+        return [] !== $annotations;
     }
 
     /**
      * 处理注解的处理器
      * @return void
      */
-    private function parseAnnotationParsers($className)
+    private function parseAnnotationParsers(\ReflectionClass $ref)
     {
-        if(!isset($this->data[$className]))
-        {
-            return;
-        }
+        $className = $ref->getName();
         if(isset($this->parsers[$className]))
         {
             return;
         }
-        $ref = new \ReflectionClass($className);
+        $annotations = AnnotationManager::getClassAnnotations($className);
+        if(!isset($annotations[0]))
+        {
+            return;
+        }
         if(!$ref->isSubclassOf('Imi\Bean\Annotation\Base'))
         {
             return;
         }
         $hasParser = false;
-        foreach($this->data[$className]['class'] as $annotation)
+        foreach($annotations as $annotation)
         {
             if($annotation instanceof \Imi\Bean\Annotation\Parser)
             {
@@ -277,131 +516,104 @@ class AnnotationParser
      */
     public function doParser(string $className)
     {
-        if(!isset($this->data[$className]))
-        {
-            return;
-        }
+        $classAnnotations = AnnotationManager::getClassAnnotations($className);
         // 类
-        if(isset($this->data[$className]['class']))
+        foreach($classAnnotations as $annotation)
         {
-            foreach($this->data[$className]['class'] as $annotation)
+            $annotationClassName = get_class($annotation);
+            if($this->hasParser($annotationClassName))
+            {
+                $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CLASS, $className);
+            }
+            else
+            {
+                $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className){
+                    $annotationClassName = get_class($annotation);
+                    if($this->hasParser($annotationClassName))
+                    {
+                        $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CLASS, $className);
+                    }
+                });
+            }
+        }
+        // 属性
+        $propertyAnnotations = AnnotationManager::getPropertiesAnnotations($className);
+        foreach($propertyAnnotations as $propName => $annotations)
+        {
+            foreach($annotations as $annotation)
             {
                 $annotationClassName = get_class($annotation);
                 if($this->hasParser($annotationClassName))
                 {
-                    $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CLASS, $className);
+                    $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_PROPERTY, $propName);
                 }
                 else
                 {
-                    $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className){
+                    $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className, $propName){
                         $annotationClassName = get_class($annotation);
                         if($this->hasParser($annotationClassName))
                         {
-                            $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CLASS, $className);
+                            $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_PROPERTY, $propName);
                         }
                     });
                 }
             }
-            AnnotationManager::addClassAnnotations($className, ...$this->data[$className]['class']);
-        }
-        // 属性
-        if(isset($this->data[$className]['prop']))
-        {
-            foreach($this->data[$className]['prop'] as $propName => $annotations)
-            {
-                foreach($annotations as $annotation)
-                {
-                    $annotationClassName = get_class($annotation);
-                    if($this->hasParser($annotationClassName))
-                    {
-                        $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_PROPERTY, $propName);
-                    }
-                    else
-                    {
-                        $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className, $propName){
-                            $annotationClassName = get_class($annotation);
-                            if($this->hasParser($annotationClassName))
-                            {
-                                $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_PROPERTY, $propName);
-                            }
-                        });
-                    }
-                }
-                AnnotationManager::addPropertyAnnotations($className, $propName, ...$annotations);
-            }
         }
         // 方法
-        if(isset($this->data[$className]['method']))
+        $methodAnnotations = AnnotationManager::getMethodsAnnotations($className);
+        foreach($methodAnnotations as $methodName => $annotations)
         {
-            foreach($this->data[$className]['method'] as $methodName => $annotations)
+            foreach($annotations as $annotation)
             {
-                foreach($annotations as $annotation)
+                $annotationClassName = get_class($annotation);
+                if($this->hasParser($annotationClassName))
                 {
-                    $annotationClassName = get_class($annotation);
-                    if($this->hasParser($annotationClassName))
-                    {
-                        $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_METHOD, $methodName);
-                    }
-                    else
-                    {
-                        $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className, $methodName){
-                            $annotationClassName = get_class($annotation);
-                            if($this->hasParser($annotationClassName))
-                            {
-                                $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_METHOD, $methodName);
-                            }
-                        });
-                    }
+                    $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_METHOD, $methodName);
                 }
-                AnnotationManager::addMethodAnnotations($className, $methodName, ...$annotations);
+                else
+                {
+                    $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className, $methodName){
+                        $annotationClassName = get_class($annotation);
+                        if($this->hasParser($annotationClassName))
+                        {
+                            $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_METHOD, $methodName);
+                        }
+                    });
+                }
             }
         }
         // 常量
-        if(isset($this->data[$className]['const']))
+        $constantAnnotations = AnnotationManager::getConstantsAnnotations($className);
+        foreach($constantAnnotations as $constName => $annotations)
         {
-            foreach($this->data[$className]['const'] as $constName => $annotations)
+            foreach($annotations as $annotation)
             {
-                foreach($annotations as $annotation)
+                $annotationClassName = get_class($annotation);
+                if($this->hasParser($annotationClassName))
                 {
-                    $annotationClassName = get_class($annotation);
-                    if($this->hasParser($annotationClassName))
-                    {
-                        $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CONST, $constName);
-                    }
-                    else
-                    {
-                        $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className, $constName){
-                            $annotationClassName = get_class($annotation);
-                            if($this->hasParser($annotationClassName))
-                            {
-                                $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CONST, $constName);
-                            }
-                        });
-                    }
+                    $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CONST, $constName);
                 }
-                AnnotationManager::addConstantAnnotations($className, $constName, ...$annotations);
+                else
+                {
+                    $this->one('parseComplete.' . $annotationClassName, function() use($annotationClassName, $annotation, $className, $constName){
+                        $annotationClassName = get_class($annotation);
+                        if($this->hasParser($annotationClassName))
+                        {
+                            $this->getParser($annotationClassName)->parse($annotation, $className, BaseParser::TARGET_CONST, $constName);
+                        }
+                    });
+                }
             }
         }
     }
     
     /**
-     * 获取处理后的数据
-     * @return array
+     * 获取类名列表
+     * @return string
      */
-    public function getData()
+    public function getClasses()
     {
-        return $this->data;
-    }
-
-    /**
-     * 设置数据
-     *
-     * @param array $data
-     * @return void
-     */
-    public function setData($data)
-    {
-        $this->data = $data;
+        return array_keys($this->classes);
     }
 
     /**
@@ -409,21 +621,9 @@ class AnnotationParser
      *
      * @return array
      */ 
-    public function getFileMap()
+    public function getFiles()
     {
-        return $this->fileMap;
-    }
-
-    /**
-     * Set 文件数据映射
-     *
-     * @param array $fileMap 文件数据映射
-     *
-     * @return void
-     */ 
-    public function setFileMap(array $fileMap)
-    {
-        $this->fileMap = $fileMap;
+        return $this->files;
     }
 
     /**
@@ -436,25 +636,84 @@ class AnnotationParser
     {
         foreach($files as $file)
         {
-            if(isset($this->fileMap[$file]))
+            if(isset($this->files[$file]))
             {
-                unset($this->fileMap[$file]);
+                unset($this->files[$file]);
             }
-            if(!is_file($file))
+            $className = null;
+            if($className = array_search($file, $this->classes))
+            {
+            }
+            else if(is_file($file))
+            {
+                $content = file_get_contents($file);
+                if(preg_match('/namespace ([^;]+);/', $content, $matches) <= 0)
+                {
+                    continue;
+                }
+                $namespace = trim($matches[1]);
+                $className = $namespace . '\\' . basename($file, '.php');
+            }
+            else
             {
                 continue;
             }
-            $content = file_get_contents($file);
-            if(preg_match('/namespace ([^;]+);/', $content, $matches) <= 0)
-            {
-                continue;
-            }
-            $namespace = trim($matches[1]);
-            $className = $namespace . '\\' . basename($file, '.php');
             if(class_exists($className))
             {
                 $this->parse($className);
             }
+            else
+            {
+                AnnotationManager::clearClassAllAnnotations($className);
+            }
+            foreach(ClassObject::getSubClasses($className, $this->getClasses()) as $subClassName)
+            {
+                if(class_exists($subClassName))
+                {
+                    $this->parse($subClassName);
+                }
+                else
+                {
+                    AnnotationManager::clearClassAllAnnotations($subClassName);
+                }
+            }
         }
     }
+
+    /**
+     * 是否处理过该类
+     *
+     * @param string $className
+     * @return boolean
+     */
+    public function isParsed($className)
+    {
+        return isset($this->classes[$className]);
+    }
+
+    /**
+     * 获取存储数据
+     *
+     * @return void
+     */
+    public function getStoreData()
+    {
+        return [
+            $this->files,
+            $this->classes,
+        ];
+    }
+
+    /**
+     * 加载存储数据
+     *
+     * @param array $data
+     * @return void
+     */
+    public function loadStoreData($data)
+    {
+        $this->files = $data[0];
+        $this->classes = $data[1];
+    }
+
 }

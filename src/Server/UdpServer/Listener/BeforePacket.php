@@ -13,7 +13,7 @@ use Imi\Server\Event\Listener\IPacketEventListener;
 
 /**
  * Packet事件前置处理
- * @ClassEventListener(className="Imi\Server\UdpServer\Server",eventName="packet",priority=PHP_INT_MAX)
+ * @ClassEventListener(className="Imi\Server\UdpServer\Server",eventName="packet",priority=Imi\Util\ImiPriority::IMI_MAX)
  */
 class BeforePacket implements IPacketEventListener
 {
@@ -26,13 +26,13 @@ class BeforePacket implements IPacketEventListener
     {
         if(!Worker::isWorkerStartAppComplete())
         {
-            $GLOBALS['WORKER_START_END_RESUME_COIDS'][] = Coroutine::getuid();
-            Coroutine::suspend();
+            return;
         }
         // 上下文创建
-        RequestContext::create();
-        RequestContext::set('clientInfo', $e->clientInfo);
-        RequestContext::set('server', $e->getTarget());
+        RequestContext::muiltiSet([
+            'clientInfo'    =>  $e->clientInfo,
+            'server'        =>  $e->getTarget(),
+        ]);
 
         // 中间件
         $dispatcher = RequestContext::getServerBean('UdpDispatcher');

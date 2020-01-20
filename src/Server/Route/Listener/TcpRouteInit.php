@@ -1,12 +1,13 @@
 <?php
 namespace Imi\Server\Route\Listener;
 
+use Imi\Config;
 use Imi\Main\Helper;
 use Imi\ServerManage;
-use Imi\RequestContext;
 use Imi\Event\EventParam;
 use Imi\Event\IEventListener;
 use Imi\Bean\Annotation\Listener;
+use Imi\Server\Route\TMiddleware;
 use Imi\Server\Route\RouteCallable;
 use Imi\Bean\Annotation\AnnotationManager;
 use Imi\Server\Route\Annotation\Tcp\TcpRoute;
@@ -20,6 +21,8 @@ use Imi\Server\Route\Annotation\Tcp\TcpMiddleware;
  */
 class TcpRouteInit implements IEventListener
 {
+    use TMiddleware;
+
     /**
      * 事件处理方法
      * @param EventParam $e
@@ -44,23 +47,16 @@ class TcpRouteInit implements IEventListener
             {
                 continue;
             }
-            RequestContext::create();
-            RequestContext::set('server', $server);
             $route = $server->getBean('TcpRoute');
             foreach($controllerParser->getByServer($name) as $className => $classItem)
             {
                 // 类中间件
+                /** @var \Imi\Server\Route\Annotation\Tcp\TcpController $classAnnotation */
+                $classAnnotation = $classItem->getAnnotation();
                 $classMiddlewares = [];
                 foreach(AnnotationManager::getClassAnnotations($className, TcpMiddleware::class) ?? [] as $middleware)
                 {
-                    if(is_array($middleware->middlewares))
-                    {
-                        $classMiddlewares = array_merge($classMiddlewares, $middleware->middlewares);
-                    }
-                    else
-                    {
-                        $classMiddlewares[] = $middleware->middlewares;
-                    }
+                    $classMiddlewares = array_merge($classMiddlewares, $this->getMiddlewares($middleware->middlewares, $name));
                 }
                 foreach(AnnotationManager::getMethodsAnnotations($className, TcpAction::class) as $methodName => $actionAnnotations)
                 {
@@ -73,27 +69,20 @@ class TcpRouteInit implements IEventListener
                     $methodMiddlewares = [];
                     foreach(AnnotationManager::getMethodAnnotations($className, $methodName, TcpMiddleware::class) ?? [] as $middleware)
                     {
-                        if(is_array($middleware->middlewares))
-                        {
-                            $methodMiddlewares = array_merge($methodMiddlewares, $middleware->middlewares);
-                        }
-                        else
-                        {
-                            $methodMiddlewares[] = $middleware->middlewares;
-                        }
+                        $methodMiddlewares = array_merge($methodMiddlewares, $this->getMiddlewares($middleware->middlewares, $name));
                     }
                     // 最终中间件
                     $middlewares = array_values(array_unique(array_merge($classMiddlewares, $methodMiddlewares)));
                     
                     foreach($routes as $routeItem)
                     {
-                        $route->addRuleAnnotation($routeItem, new RouteCallable($className, $methodName), [
+                        $route->addRuleAnnotation($routeItem, new RouteCallable($server, $className, $methodName), [
                             'middlewares' => $middlewares,
+                            'singleton'   => null === $classAnnotation->singleton ? Config::get('@server.' . $name . '.controller.singleton', false) : $classAnnotation->singleton,
                         ]);
                     }
                 }
             }
-            RequestContext::destroy();
         }
     }
 
@@ -119,7 +108,7 @@ class TcpRouteInit implements IEventListener
                 }
                 else
                 {
-                    $callable = new RouteCallable($routeOption['controller'], $routeOption['method']);
+                    $callable = new RouteCallable($server, $routeOption['controller'], $routeOption['method']);
                 }
                 $route->addRuleAnnotation($routeAnnotation, $callable, [
                     'middlewares' => $routeOption['middlewares'],

@@ -14,9 +14,9 @@ use Imi\ServerManage;
 function imigo(callable $callable, ...$args)
 {
     $newCallable = imiCallable($callable);
-    return go(function() use($newCallable, $args){
+    return go(function(...$args) use($newCallable){
         $newCallable(...$args);
-    });
+    }, ...$args);
 }
 
 /**
@@ -28,35 +28,38 @@ function imigo(callable $callable, ...$args)
  */
 function imiCallable(callable $callable, bool $withGo = false)
 {
-    $server = RequestContext::exists() ? RequestContext::get('server') : null;
+    $server = RequestContext::get('server');
     $resultCallable = function(...$args) use($callable, $server){
-        $hasRequestContext = RequestContext::exists();
-        try {
-            if(!$hasRequestContext)
-            {
-                RequestContext::create();
-                RequestContext::set('server', $server);
-            }
-            return $callable(...$args);
-        } catch(\Throwable $th) {
-            App::getBean('ErrorLog')->onException($th);
-        } finally {
-            if(!$hasRequestContext && RequestContext::exists())
-            {
-                RequestContext::destroy();
-            }
-        }
+        RequestContext::set('server', $server);
+        return $callable(...$args);
     };
     if($withGo)
     {
         return function(...$args) use($resultCallable){
-            return go(function() use($args, $resultCallable){
+            return go(function(...$args) use($resultCallable){
                 return $resultCallable(...$args);
-            });
+            }, ...$args);
         };
     }
     else
     {
         return $resultCallable;
     }
+}
+
+/**
+ * getenv() 函数的封装，支持默认值
+ * 
+ * @param string $varname
+ * @param mixed $default
+ * @param bool $localOnly
+ */
+function imiGetEnv($varname = null, $default = null, $localOnly = false)
+{
+    $result = getenv($varname, $localOnly);
+    if(false === $result)
+    {
+        return $default;
+    }
+    return $result;
 }

@@ -56,16 +56,23 @@ abstract class BaseAsyncPool extends BasePool
         }
         if(true === $selectResult)
         {
-            $resource = $this->queue->pop();
+            $poolItem = $this->queue->pop();
         }
         else
         {
-            $resource = $selectResult;
+            $poolItem = $selectResult;
         }
-        if(!$resource || (!$resource->checkState() && !$resource->open()))
+        if(!$poolItem)
         {
             throw new \RuntimeException(sprintf('AsyncPool [%s] getResource failed', $this->getName()));
         }
+        /** @var \Imi\Pool\PoolItem $poolItem */
+        $resource = $poolItem->getResource();
+        if(!$resource || ($this->config->isCheckStateWhenGetResource() && !$resource->checkState() && !$resource->close() && !$resource->open()))
+        {
+            throw new \RuntimeException(sprintf('AsyncPool [%s] getResource failed', $this->getName()));
+        }
+        $poolItem->lock();
         return $resource;
     }
 
@@ -87,8 +94,6 @@ abstract class BaseAsyncPool extends BasePool
                 return false;
             }
         }
-        $read = [$this->queue];
-        $write = null;
         // Coroutine\Channel::select()/->pop() 最小超时时间1毫秒
         $result = $this->queue->pop(0.001);
         if(false === $result)
@@ -97,16 +102,23 @@ abstract class BaseAsyncPool extends BasePool
         }
         if(true === $result)
         {
-            $resource = $this->queue->pop();
+            $poolItem = $this->queue->pop();
         }
         else
         {
-            $resource = $result;
+            $poolItem = $result;
         }
-        if(!$resource->checkState() && !$resource->open())
+        if(!$poolItem)
+        {
+            throw new \RuntimeException(sprintf('AsyncPool [%s] getResource failed', $this->getName()));
+        }
+        /** @var \Imi\Pool\PoolItem $poolItem */
+        $resource = $poolItem->getResource();
+        if(!$resource || ($this->config->isCheckStateWhenGetResource() && !$resource->checkState() && !$resource->close() && !$resource->open()))
         {
             throw new \RuntimeException(sprintf('AsyncPool [%s] tryGetResource failed', $this->getName()));
         }
+        $poolItem->lock();
         return $resource;
     }
 
@@ -125,7 +137,7 @@ abstract class BaseAsyncPool extends BasePool
         // 重新建立队列
         foreach($this->pool as $item)
         {
-            $this->queue->push($item->getResource());
+            $this->queue->push($item);
         }
         $this->free = $this->queue->length();
     }
@@ -137,15 +149,19 @@ abstract class BaseAsyncPool extends BasePool
      */
     protected function push(IPoolResource $resource)
     {
-        if(Coroutine::isIn())
+        $poolItem = $this->pool[$resource->hashCode()] ?? null;
+        if($poolItem)
         {
-            $this->queue->push($resource);
-        }
-        else
-        {
-            go(function() use($resource){
-                $this->queue->push($resource);
-            });
+            if(Coroutine::isIn())
+            {
+                $this->queue->push($poolItem);
+            }
+            else
+            {
+                go(function() use($poolItem){
+                    $this->queue->push($poolItem);
+                });
+            }
         }
     }
 

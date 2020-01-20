@@ -2,6 +2,7 @@
 namespace Imi\Db\Drivers;
 
 use Imi\Db\Interfaces\IStatement;
+use Imi\Db\Statement\StatementManager;
 
 
 abstract class BaseStatement implements IStatement
@@ -13,7 +14,7 @@ abstract class BaseStatement implements IStatement
      */
     public function close()
     {
-        StatementManager::remove($this->getDb(), $this->getSql());
+        StatementManager::remove($this);
     }
 
 }

@@ -13,8 +13,7 @@ class UdpRoute implements IRoute
 {
     /**
      * 路由规则
-     * url => Imi\Server\Route\Annotation\UdpServer\UdpRoute[]
-     * @var array
+     * @var \Imi\Server\UdpServer\Route\RouteItem[]
      */
     protected $rules = [];
 
@@ -27,12 +26,9 @@ class UdpRoute implements IRoute
     {
         foreach($this->rules as $item)
         {
-            if($this->checkCondition($data, $item['annotation']))
+            if($this->checkCondition($data, $item->annotation))
             {
-                return [
-                    'callable'      => $this->parseCallable([], $item['callable']),
-                    'middlewares'   => $item['middlewares'] ?? [],
-                ];
+                return new RouteResult($item);
             }
         }
         return null;
@@ -47,10 +43,16 @@ class UdpRoute implements IRoute
      */
     public function addRuleAnnotation(UdpRouteAnnotation $annotation, $callable, $options = [])
     {
-        $this->rules[$this->hashKey($annotation)] = array_merge([
-            'annotation'=> $annotation,
-            'callable'  => $callable,
-        ], $options);
+        $routeItem = new RouteItem($annotation, $callable, $options);
+        if(isset($options['middlewares']))
+        {
+            $routeItem->middlewares = $options['middlewares'];
+        }
+        if(isset($options['singleton']))
+        {
+            $routeItem->singleton = $options['singleton'];
+        }
+        $this->rules[spl_object_hash($annotation)] = $routeItem;
     }
 
     /**
@@ -69,26 +71,16 @@ class UdpRoute implements IRoute
      */
     public function existsRule(UdpRouteAnnotation $rule)
     {
-        return isset($this->rules[$this->hashKey($rule)]);
+        return isset($this->rules[spl_object_hash($rule)]);
     }
 
     /**
      * 获取路由规则
-     * @return array
+     * @return \Imi\Server\UdpServer\Route\RouteItem[]
      */
     public function getRules()
     {
         return $this->rules;
-    }
-
-    /**
-     * 对key做hash
-     * @param mixed $key
-     * @return boolean
-     */
-    private function hashKey($key)
-    {
-        return md5(serialize($key));
     }
 
     /**
@@ -113,21 +105,4 @@ class UdpRoute implements IRoute
         return true;
     }
 
-    /**
-     * 处理回调
-     * @param array $params
-     * @param mixed $callable
-     * @return callable
-     */
-    private function parseCallable($params, $callable)
-    {
-        if($callable instanceof RouteCallable)
-        {
-            return $callable->getCallable($params);
-        }
-        else
-        {
-            return $callable;
-        }
-    }
 }

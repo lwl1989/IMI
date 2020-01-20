@@ -25,6 +25,7 @@ use Imi\Db\Query\Having\HavingBrackets;
 use Imi\Db\Query\Interfaces\IBaseWhere;
 use Imi\Db\Query\Builder\ReplaceBuilder;
 use Imi\Db\Query\Builder\BatchInsertBuilder;
+use Imi\Db\Query\Interfaces\IPaginateResult;
 
 /**
  * @Bean("Query")
@@ -83,6 +84,34 @@ class Query implements IQuery
      */
     protected $isInitDb;
 
+    /**
+     * 数据库字段自增
+     *
+     * @var integer
+     */
+    protected $dbParamInc = 0;
+
+    /**
+     * 查询器别名集合
+     *
+     * @var \Imi\Db\Query\Interfaces\IQuery[]
+     */
+    protected static $aliasMap = [];
+
+    /**
+     * 当前别名
+     *
+     * @var string
+     */
+    protected $alias;
+
+    /**
+     * 别名 Sql 集合
+     *
+     * @var string[]
+     */
+    protected static $aliasSqls = [];
+
     public function __construct(IDb $db = null, $modelClass = null, $poolName = null, $queryType = null)
     {
         $this->db = $db;
@@ -95,11 +124,19 @@ class Query implements IQuery
 
     public function __init()
     {
+        $this->dbParamInc = 0;
         $this->option = new QueryOption;
         if(!$this->isInitQueryType)
         {
             $this->queryType = null;
         }
+    }
+
+    public function __clone()
+    {
+        $this->isInitDb = false;
+        $this->db = null;
+        $this->option = clone $this->option;
     }
 
     /**
@@ -118,6 +155,7 @@ class Query implements IQuery
      */
     public function setOption(QueryOption $option)
     {
+        $this->dbParamInc = 0;
         $this->option = $option;
         return $this;
     }
@@ -299,6 +337,9 @@ class Query implements IQuery
      */
     public function whereEx(array $condition, string $logicalOperator = LogicalOperator::AND)
     {
+        if(!$condition){
+            return $this;
+        }
         $func = function($condition) use(&$func){
             $result = [];
             foreach($condition as $key => $value)
@@ -317,24 +358,28 @@ class Query implements IQuery
                                     throw new \RuntimeException('Between must have 3 params');
                                 }
                                 $result[] = new Where($key, 'between', [$value[1], $value[2]]);
+                                break;
                             case 'not between':
                                 if(!isset($value[2]))
                                 {
                                     throw new \RuntimeException('Not between must have 3 params');
                                 }
                                 $result[] = new Where($key, 'not between', [$value[1], $value[2]]);
+                                break;
                             case 'in':
                                 if(!isset($value[1]))
                                 {
                                     throw new \RuntimeException('In must have 3 params');
                                 }
                                 $result[] = new Where($key, 'in', $value[1]);
+                                break;
                             case 'not in':
                                 if(!isset($value[1]))
                                 {
                                     throw new \RuntimeException('Not in must have 3 params');
                                 }
                                 $result[] = new Where($key, 'not in', $value[1]);
+                                break;
                             default:
                                 $result[] = new Where($key, $operator, $value[1]);
                                 break;
@@ -839,13 +884,47 @@ class Query implements IQuery
      */
     public function select(): IResult
     {
-        $builder = new SelectBuilder($this);
-        $sql = $builder->build();
+        if($this->alias && isset(static::$aliasSqls[$this->alias]))
+        {
+            $sql = static::$aliasSqls[$this->alias];
+        }
+        else
+        {
+            $builder = new SelectBuilder($this);
+            static::$aliasSqls[$this->alias] = $sql = $builder->build();
+        }
         if(!$this->isInitQueryType && !$this->isInTransaction())
         {
             $this->queryType = QueryType::READ;
         }
         return $this->execute($sql);
+    }
+
+    /**
+     * 分页查询
+     *
+     * @param boolean $status 设置为true时，查询结果会返回为分页格式
+     * @param array $options
+     * @return \Imi\Db\Query\Interfaces\IPaginateResult
+     */
+    public function paginate($page, $count, $options = []): IPaginateResult
+    {
+        if($options['total'] ?? true)
+        {
+            $option = clone $this->option;
+            $queryType = $this->queryType;
+            $total = (int)$this->count();
+            $this->option = $option;
+            $this->queryType = $queryType;
+        }
+        else
+        {
+            $total = null;
+        }
+        $this->page($page, $count);
+        $statement = $this->select();
+        $pagination = new Pagination($page, $count);
+        return new PaginateResult($statement, $pagination->getLimitOffset(), $count, $total, null === $total ? null : $pagination->calcPageCount($total), $options);
     }
 
     /**
@@ -855,8 +934,29 @@ class Query implements IQuery
      */
     public function insert($data = null): IResult
     {
-        $builder = new InsertBuilder($this);
-        $sql = $builder->build($data);
+        if($this->alias && isset(static::$aliasSqls[$this->alias]))
+        {
+            $sql = static::$aliasSqls[$this->alias];
+            $bindValues = [];
+            $numberKey = isset($data[0]);
+            foreach($data as $k => $v)
+            {
+                if($numberKey)
+                {
+                    $bindValues[':' . ($k + 1)] = $v;
+                }
+                else
+                {
+                    $bindValues[':' . $k] = $v;
+                }
+            }
+            $this->bindValues($bindValues);
+        }
+        else
+        {
+            $builder = new InsertBuilder($this);
+            static::$aliasSqls[$this->alias] = $sql = $builder->build($data);
+        }
         return $this->execute($sql);
     }
 
@@ -882,8 +982,21 @@ class Query implements IQuery
      */
     public function update($data = null): IResult
     {
-        $builder = new UpdateBuilder($this);
-        $sql = $builder->build($data);
+        if($this->alias && isset(static::$aliasSqls[$this->alias]))
+        {
+            $sql = static::$aliasSqls[$this->alias];
+            $bindValues = [];
+            foreach($data as $k => $v)
+            {
+                $bindValues[':' . $k] = $v;
+            }
+            $this->bindValues($bindValues);
+        }
+        else
+        {
+            $builder = new UpdateBuilder($this);
+            static::$aliasSqls[$this->alias] = $sql = $builder->build($data);
+        }
         return $this->execute($sql);
     }
 
@@ -895,8 +1008,21 @@ class Query implements IQuery
      */
     public function replace($data = null): IResult
     {
-        $builder = new ReplaceBuilder($this);
-        $sql = $builder->build($data);
+        if($this->alias && isset(static::$aliasSqls[$this->alias]))
+        {
+            $sql = static::$aliasSqls[$this->alias];
+            $bindValues = [];
+            foreach($data as $k => $v)
+            {
+                $bindValues[':' . $k] = $v;
+            }
+            $this->bindValues($bindValues);
+        }
+        else
+        {
+            $builder = new ReplaceBuilder($this);
+            static::$aliasSqls[$this->alias] = $sql = $builder->build($data);
+        }
         return $this->execute($sql);
     }
 
@@ -906,10 +1032,16 @@ class Query implements IQuery
      */
     public function delete(): IResult
     {
-        $builder = new DeleteBuilder($this);
-        $sql = $builder->build();
+        if($this->alias && isset(static::$aliasSqls[$this->alias]))
+        {
+            $sql = static::$aliasSqls[$this->alias];
+        }
+        else
+        {
+            $builder = new DeleteBuilder($this);
+            static::$aliasSqls[$this->alias] = $sql = $builder->build();
+        }
         $result = $this->execute($sql);
-        $this->__init();
         return $result;
     }
 
@@ -1017,16 +1149,14 @@ class Query implements IQuery
      * 获取自动起名的参数名称
      * @return string
      */
-    public static function getAutoParamName()
+    public function getAutoParamName()
     {
-        $index = RequestContext::get('dbParamInc', 0);
-        if($index >= 65535) // 限制dechex()结果最长为ffff，一般一个查询也不会用到这么多参数，足够了
+        if($this->dbParamInc >= 65535) // 限制dechex()结果最长为ffff，一般一个查询也不会用到这么多参数，足够了
         {
-            $index = 0;
+            $this->dbParamInc = 0;
         }
-        ++$index;
-        RequestContext::set('dbParamInc', $index);
-        return ':p' . dechex($index);
+        ++$this->dbParamInc;
+        return ':p' . dechex($this->dbParamInc);
     }
 
     /**
@@ -1116,4 +1246,23 @@ class Query implements IQuery
             return false;
         }
     }
+
+    /**
+     * 查询器别名
+     *
+     * @param string $name
+     * @param callable $callable
+     * @return static
+     */
+    public function alias($name, $callable)
+    {
+        if(!isset(static::$aliasMap[$name]))
+        {
+            $callable($this);
+            $this->alias = $name;
+            static::$aliasMap[$name] = $this;
+        }
+        return clone static::$aliasMap[$name];
+    }
+
 }
